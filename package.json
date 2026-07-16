@@ -1,0 +1,47 @@
+{
+  "name": "otpkit",
+  "version": "1.0.0",
+  "description": "Zero-dependency, RFC-verified HOTP & TOTP (2FA / authenticator) codes for Node.js and TypeScript.",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE", "CHANGELOG.md"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "totp",
+    "hotp",
+    "otp",
+    "2fa",
+    "mfa",
+    "authenticator",
+    "google-authenticator",
+    "two-factor",
+    "rfc6238",
+    "rfc4226",
+    "rfc4648",
+    "zero-dependency",
+    "typescript"
+  ],
+  "author": "Tyler Tupper (https://github.com/tsctupper)",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "repository": { "type": "git", "url": "git+https://github.com/tsctupper/otpkit.git" },
+  "bugs": { "url": "https://github.com/tsctupper/otpkit/issues" },
+  "homepage": "https://github.com/tsctupper/otpkit#readme",
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
