@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 export type OtpAlgorithm = "SHA1" | "SHA256" | "SHA512";
 
 export interface HotpOptions {
-  /** Digits in the generated code (default 6). */
+  /** Digits in the generated code, 6–8 per RFC 4226 §5.3 (default 6). */
   digits?: number;
   /** HMAC hash — default "SHA1", the value authenticator apps assume. */
   algorithm?: OtpAlgorithm;
@@ -18,9 +18,12 @@ export interface HotpOptions {
 export function hotp(secret: Uint8Array, counter: number | bigint, options: HotpOptions = {}): string {
   const digits = options.digits ?? 6;
   const algorithm = options.algorithm ?? "SHA1";
-  if (!Number.isInteger(digits) || digits < 1 || digits > 10) {
-    throw new RangeError("digits must be an integer between 1 and 10");
+  // Dynamic truncation yields at most 31 bits, so codes longer than 8 digits
+  // could never span their full range — RFC 4226 §5.3 defines 6–8.
+  if (!Number.isInteger(digits) || digits < 6 || digits > 8) {
+    throw new RangeError("digits must be an integer between 6 and 8");
   }
+  if (secret.length === 0) throw new RangeError("secret must not be empty");
 
   // 8-byte big-endian counter — RFC 4226 §5.1.
   let c = BigInt(counter);

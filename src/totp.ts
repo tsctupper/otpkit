@@ -15,8 +15,13 @@ function counterFor(options: TotpOptions): bigint {
   const period = options.period ?? 30;
   const epoch = options.epoch ?? 0;
   const nowMs = options.now ?? Date.now();
-  const steps = Math.floor(Math.floor(nowMs / 1000) - epoch) / period;
-  return BigInt(Math.floor(steps));
+  if (!Number.isFinite(period) || period <= 0) {
+    throw new RangeError("period must be a positive number of seconds");
+  }
+  if (!Number.isFinite(nowMs)) throw new RangeError("now must be a finite Unix time in milliseconds");
+  const seconds = Math.floor(nowMs / 1000) - epoch;
+  if (seconds < 0) throw new RangeError("now is before the epoch (T0)");
+  return BigInt(Math.floor(seconds / period));
 }
 
 /** RFC 6238 time-based OTP for the current (or supplied) moment. */
@@ -42,13 +47,17 @@ export function verifyTotp(token: string, secret: Uint8Array, options: VerifyOpt
     throw new RangeError("window must be a non-negative integer");
   }
   const digits = options.digits ?? 6;
-  if (token.length !== digits) return false;
+  if (token.length !== digits || !/^[0-9]+$/.test(token)) return false;
 
   const expected = Buffer.from(token, "ascii");
   const center = counterFor(options);
   let matched = false;
   for (let e = -window; e <= window; e++) {
-    const candidate = Buffer.from(hotp(secret, center + BigInt(e), options), "ascii");
+    const step = center + BigInt(e);
+    // Steps before the epoch don't exist — skip rather than throw, so a
+    // drift window that reaches past T0 can never crash verification.
+    if (step < 0n) continue;
+    const candidate = Buffer.from(hotp(secret, step, options), "ascii");
     if (candidate.length === expected.length && timingSafeEqual(candidate, expected)) {
       matched = true;
     }

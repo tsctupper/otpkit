@@ -28,7 +28,11 @@ export interface OtpauthParams {
  */
 export function otpauthURL(secret: Uint8Array, params: OtpauthParams): string {
   const { label, issuer, digits = 6, period = 30, algorithm = "SHA1" } = params;
-  const accountName = issuer ? `${issuer}:${label}` : label;
+  // Key URI Format: path is `issuer:label`, each component percent-encoded
+  // separately with the `:` separator left literal, as in the spec's examples.
+  const path = issuer
+    ? `${encodeURIComponent(issuer)}:${encodeURIComponent(label)}`
+    : encodeURIComponent(label);
   const query = new URLSearchParams({
     secret: base32Encode(secret).replace(/=+$/, ""),
     algorithm,
@@ -36,5 +40,5 @@ export function otpauthURL(secret: Uint8Array, params: OtpauthParams): string {
     period: String(period),
   });
   if (issuer) query.set("issuer", issuer);
-  return `otpauth://totp/${encodeURIComponent(accountName)}?${query.toString()}`;
+  return `otpauth://totp/${path}?${query.toString()}`;
 }

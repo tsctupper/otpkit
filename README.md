@@ -75,7 +75,9 @@ hotp(secret, 42); // counter-based (RFC 4226)
 | `otpauthURL(secret, params)` | `otpauth://totp/...` enrollment URI. |
 | `base32Encode` / `base32Decode` | RFC 4648 Base32, tolerant decode. |
 
-`secret` is always **raw bytes** (`Uint8Array`) — decode Base32 text first. Options: `digits` (default 6), `algorithm` (`"SHA1"` default), `period` (30s), `window`, `now`, `epoch`. Full types are bundled.
+`secret` is always **raw bytes** (`Uint8Array`) — decode Base32 text first. Options: `digits` (6–8, default 6), `algorithm` (`"SHA1"` default), `period` (30s), `window`, `now`, `epoch`. Full types are bundled.
+
+Invalid configuration (out-of-range digits, non-positive period, negative window, empty secret) throws a `RangeError`; a malformed or wrong token never throws — `verifyTotp` just returns `false`.
 
 ## Standards & verification
 

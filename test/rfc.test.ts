@@ -81,8 +81,63 @@ test("generateSecret + otpauthURL round-trip through Base32", () => {
   const secret = generateSecret(20);
   assert.equal(secret.length, 20);
   const url = otpauthURL(secret, { label: "alice@example.com", issuer: "OtpKit", digits: 6, period: 30 });
-  assert.match(url, /^otpauth:\/\/totp\/OtpKit%3Aalice%40example\.com\?/);
-  const secretParam = new URL(url).searchParams.get("secret");
+  assert.match(url, /^otpauth:\/\/totp\/OtpKit:alice%40example\.com\?/);
+  const parsed = new URL(url);
+  assert.equal(parsed.searchParams.get("issuer"), "OtpKit");
+  const secretParam = parsed.searchParams.get("secret");
   assert.ok(secretParam);
+  assert.ok(!secretParam.includes("="), "secret is unpadded");
   assert.deepEqual(base32Decode(secretParam), secret);
+});
+
+test("otpauthURL percent-encodes issuer and label separately", () => {
+  const secret = generateSecret();
+  const url = otpauthURL(secret, { label: "john doe", issuer: "ACME Co" });
+  assert.match(url, /^otpauth:\/\/totp\/ACME%20Co:john%20doe\?/);
+  const noIssuer = otpauthURL(secret, { label: "alice@example.com" });
+  assert.match(noIssuer, /^otpauth:\/\/totp\/alice%40example\.com\?/);
+  assert.equal(new URL(noIssuer).searchParams.has("issuer"), false);
+});
+
+test("HOTP accepts bigint counters and rejects invalid input", () => {
+  assert.equal(hotp(HOTP_SECRET, 9n), hotp(HOTP_SECRET, 9));
+  assert.throws(() => hotp(HOTP_SECRET, -1), RangeError);
+  assert.throws(() => hotp(HOTP_SECRET, 0, { digits: 5 }), RangeError);
+  assert.throws(() => hotp(HOTP_SECRET, 0, { digits: 9 }), RangeError);
+  assert.throws(() => hotp(new Uint8Array(0), 0), RangeError);
+});
+
+test("TOTP validates period and clock inputs", () => {
+  assert.throws(() => totp(SEED.SHA1, { period: 0 }), RangeError);
+  assert.throws(() => totp(SEED.SHA1, { period: -30 }), RangeError);
+  assert.throws(() => totp(SEED.SHA1, { now: Number.NaN }), RangeError);
+  assert.throws(() => totp(SEED.SHA1, { now: 5_000, epoch: 100 }), RangeError);
+});
+
+test("verifyTotp never throws when the drift window reaches past the epoch", () => {
+  // At t=0 a ±1 window would touch counter −1; those steps are skipped.
+  assert.equal(verifyTotp(hotp(SEED.SHA1, 0), SEED.SHA1, { now: 0 }), true);
+  assert.equal(verifyTotp("000000", SEED.SHA1, { now: 0 }), false);
+});
+
+test("verifyTotp rejects malformed tokens without touching the secret", () => {
+  assert.equal(verifyTotp("94287082", SEED.SHA1, { digits: 6, now: 59_000 }), false); // wrong length
+  assert.equal(verifyTotp("9428708a", SEED.SHA1, { digits: 8, now: 59_000 }), false); // non-digit
+  assert.equal(verifyTotp("", SEED.SHA1, { now: 59_000 }), false);
+  assert.throws(() => verifyTotp("94287082", SEED.SHA1, { digits: 8, window: -1 }), RangeError);
+  assert.throws(() => verifyTotp("94287082", SEED.SHA1, { digits: 8, window: 1.5 }), RangeError);
+});
+
+test("Base32 decode is tolerant of case and whitespace but rejects bad characters", () => {
+  assert.deepEqual(base32Decode("mzxw 6ytb"), base32Decode("MZXW6YTB"));
+  assert.throws(() => base32Decode("MZXW6YT1"), /Invalid Base32 character/);
+  assert.throws(() => base32Decode("MZXW6YT!"), /Invalid Base32 character/);
+});
+
+test("generateSecret enforces the 16-byte floor and produces distinct secrets", () => {
+  assert.throws(() => generateSecret(8), RangeError);
+  assert.throws(() => generateSecret(19.5), RangeError);
+  const a = generateSecret(32);
+  assert.equal(a.length, 32);
+  assert.notDeepEqual(generateSecret(), generateSecret());
 });
