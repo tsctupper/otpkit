@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-11-03
+
 ### Fixed
 
 - `verifyTotp` no longer throws when the drift window reaches past the epoch
@@ -38,4 +40,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `base32Encode` / `base32Decode` — RFC 4648 Base32, tolerant decoding.
 - Test suite pinned to the RFC 4226, 6238, and 4648 official vectors.
 
+[Unreleased]: https://github.com/tsctupper/otpkit/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/tsctupper/otpkit/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tsctupper/otpkit/releases/tag/v1.0.0
