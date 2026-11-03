@@ -49,5 +49,5 @@ jobs:
           npm run build
           npm pack --silent
           mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
-          npm init -y >/dev/null && npm install --silent "$GITHUB_WORKSPACE"/otpkit-*.tgz
-          node --input-type=module -e "import { totp, generateSecret } from 'otpkit'; console.log(totp(generateSecret()))"
+          npm init -y >/dev/null && npm install --silent "$GITHUB_WORKSPACE"/tsctupper-otpkit-*.tgz
+          node --input-type=module -e "import { totp, generateSecret } from '@tsctupper/otpkit'; console.log(totp(generateSecret()))"

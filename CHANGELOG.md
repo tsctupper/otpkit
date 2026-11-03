@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-11-03
+
+### Changed
+
+- The package is now published as `@tsctupper/otpkit`. npm rejected the
+  unscoped name `otpkit` as too similar to an existing package. Install with
+  `npm install @tsctupper/otpkit`. No library changes. Versions 1.1.0 and 1.1.1
+  were tagged on GitHub but never published to npm.
+
 ## [1.1.1] — 2026-11-03
 
 ### Changed
@@ -61,6 +70,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `base32Encode` / `base32Decode` — RFC 4648 Base32, tolerant decoding.
 - Test suite pinned to the RFC 4226, 6238, and 4648 official vectors.
 
-[Unreleased]: https://github.com/tsctupper/otpkit/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/tsctupper/otpkit/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/tsctupper/otpkit/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/tsctupper/otpkit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/tsctupper/otpkit/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tsctupper/otpkit/releases/tag/v1.0.0
