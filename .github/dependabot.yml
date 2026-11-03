@@ -6,6 +6,14 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    ignore:
+      # typescript-eslint lags new TypeScript majors, and a mismatch breaks `npm ci`.
+      # Upgrade TypeScript deliberately, once the lint tooling supports it.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # The package supports Node >= 18, so type definitions must not run ahead of that.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
