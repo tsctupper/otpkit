@@ -30,15 +30,25 @@ export function otpauthURL(secret: Uint8Array, params: OtpauthParams): string {
   const { label, issuer, digits = 6, period = 30, algorithm = "SHA1" } = params;
   // Key URI Format: path is `issuer:label`, each component percent-encoded
   // separately with the `:` separator left literal, as in the spec's examples.
+  if (label.length === 0) throw new RangeError("label must not be empty");
+  if (!Number.isInteger(digits) || digits < 6 || digits > 8) {
+    throw new RangeError("digits must be an integer between 6 and 8");
+  }
+  if (!Number.isInteger(period) || period <= 0) {
+    throw new RangeError("period must be a positive integer number of seconds");
+  }
   const path = issuer
     ? `${encodeURIComponent(issuer)}:${encodeURIComponent(label)}`
     : encodeURIComponent(label);
-  const query = new URLSearchParams({
-    secret: base32Encode(secret).replace(/=+$/, ""),
-    algorithm,
-    digits: String(digits),
-    period: String(period),
-  });
-  if (issuer) query.set("issuer", issuer);
-  return `otpauth://totp/${path}?${query.toString()}`;
+  // Built by hand rather than URLSearchParams: that encodes spaces as `+`,
+  // which several authenticator apps show literally (e.g. "Acme+Corp").
+  const pairs = [
+    ["secret", base32Encode(secret).replace(/=+$/, "")],
+    ["algorithm", algorithm],
+    ["digits", String(digits)],
+    ["period", String(period)],
+  ];
+  if (issuer) pairs.push(["issuer", issuer]);
+  const query = pairs.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  return `otpauth://totp/${path}?${query}`;
 }

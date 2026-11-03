@@ -141,3 +141,18 @@ test("generateSecret enforces the 16-byte floor and produces distinct secrets", 
   assert.equal(a.length, 32);
   assert.notDeepEqual(generateSecret(), generateSecret());
 });
+
+test("otpauthURL encodes spaces as %20 and validates its inputs", () => {
+  const uri = otpauthURL(new Uint8Array(16).fill(1), { label: "a@b.c", issuer: "Acme Corp" });
+  assert.ok(uri.includes("issuer=Acme%20Corp"));
+  assert.ok(!uri.includes("+"));
+  assert.throws(() => otpauthURL(new Uint8Array(16), { label: "" }), RangeError);
+  assert.throws(() => otpauthURL(new Uint8Array(16), { label: "x", digits: 9 }), RangeError);
+  assert.throws(() => otpauthURL(new Uint8Array(16), { label: "x", period: 0 }), RangeError);
+});
+
+test("hotp rejects counters that would wrap past 2^64 - 1", () => {
+  const s = new Uint8Array(20).fill(1);
+  assert.doesNotThrow(() => hotp(s, 0xffffffffffffffffn));
+  assert.throws(() => hotp(s, 1n << 64n), RangeError);
+});

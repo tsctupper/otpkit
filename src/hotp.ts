@@ -27,7 +27,9 @@ export function hotp(secret: Uint8Array, counter: number | bigint, options: Hotp
 
   // 8-byte big-endian counter — RFC 4226 §5.1.
   let c = BigInt(counter);
-  if (c < 0n) throw new RangeError("counter must be non-negative");
+  if (c < 0n || c > 0xffffffffffffffffn) {
+    throw new RangeError("counter must be between 0 and 2^64 - 1");
+  }
   const counterBytes = new Uint8Array(8);
   for (let i = 7; i >= 0; i--) {
     counterBytes[i] = Number(c & 0xffn);
