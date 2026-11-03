@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-11-03
+
+### Changed
+
+- The release workflow now stages the npm publish (`npm stage publish`) instead
+  of publishing directly, because npm is retiring two-factor-bypass tokens. A
+  maintainer approves the staged release on npmjs.com. No library changes.
+
 ## [1.1.0] — 2026-11-03
 
 ### Added

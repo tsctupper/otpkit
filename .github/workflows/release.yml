@@ -1,7 +1,8 @@
 name: Release
 
-# Publishes to npm with provenance when a GitHub release is published.
-# Requires an `NPM_TOKEN` repository secret.
+# Stages a publish to npm when a GitHub release is published. npm requires
+# two-factor approval for the release to go live: approve it from the Staged
+# Packages tab on npmjs.com. Requires an `NPM_TOKEN` repository secret.
 on:
   release:
     types: [published]
@@ -20,7 +21,8 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
+      - run: npm install -g npm@latest # staged publishing needs npm >= 11.15
       - run: npm ci
-      - run: npm publish --provenance --access public
+      - run: npm stage publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
