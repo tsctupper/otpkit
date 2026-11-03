@@ -8,6 +8,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.1.0] — 2026-11-03
 
+### Added
+
+- `matchTotp` returns the matched time-step counter (or `null`), making replay
+  protection straightforward (RFC 6238 §5.2). `verifyTotp` is now built on it.
+- `MAX_WINDOW` export. A `window` above 100 now throws `RangeError`, bounding
+  the HMAC work that untrusted input can request.
+
 ### Fixed
 
 - `verifyTotp` no longer throws when the drift window reaches past the epoch
@@ -20,14 +27,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `otpauthURL` percent-encodes issuer and label separately with a literal `:`
   separator, matching the Key URI Format's canonical examples.
 - Empty secrets and non-digit tokens are rejected explicitly.
-
 - `otpauthURL` encodes spaces as `%20` instead of `+` in query values (issuer),
   and validates `label`, `digits` and `period`.
 - `hotp` rejects counters above 2^64 − 1 instead of silently wrapping.
+- `base32Decode` rejects `=` anywhere but the end, and trims trailing padding in
+  linear time (a regex here was quadratic on long runs of `=`).
 
 ### Changed
 
 - CI now tests every supported Node line: 18, 20, 22, and 24.
+- Strict type-checked ESLint, Prettier, `noUncheckedIndexedAccess`, and a
+  type-checked test suite split per module, with 100% line and branch coverage.
+- CI gains a lint/format/coverage job and a packed-install smoke test.
+- Added `SECURITY.md`, `CONTRIBUTING.md`, issue and PR templates, Dependabot,
+  CodeQL, and an npm release workflow with provenance.
 
 ## [1.0.0] — 2026-07-16
 
