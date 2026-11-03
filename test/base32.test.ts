@@ -40,3 +40,11 @@ test("all byte values survive a round trip", () => {
   const all = Uint8Array.from({ length: 256 }, (_, i) => i);
   assert.deepEqual(base32Decode(base32Encode(all)), all);
 });
+
+test("decode runs in linear time on adversarial padding (no ReDoS)", () => {
+  const start = process.hrtime.bigint();
+  assert.throws(() => base32Decode("=".repeat(200_000) + "!"), /Invalid Base32 character/);
+  assert.throws(() => base32Decode("=".repeat(200_000) + "A"), /Invalid Base32 character/);
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  assert.ok(ms < 1000, `took ${ms}ms`);
+});

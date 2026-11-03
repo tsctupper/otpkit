@@ -43,7 +43,7 @@ export function otpauthURL(secret: Uint8Array, params: OtpauthParams): string {
   // Built by hand rather than URLSearchParams: that encodes spaces as `+`,
   // which several authenticator apps show literally (e.g. "Acme+Corp").
   const pairs: [string, string][] = [
-    ["secret", base32Encode(secret).replace(/=+$/, "")],
+    ["secret", unpaddedBase32(secret)],
     ["algorithm", algorithm],
     ["digits", String(digits)],
     ["period", String(period)],
@@ -51,4 +51,11 @@ export function otpauthURL(secret: Uint8Array, params: OtpauthParams): string {
   if (issuer) pairs.push(["issuer", issuer]);
   const query = pairs.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
   return `otpauth://totp/${path}?${query}`;
+}
+
+/** Base32 without `=` padding, as authenticator apps expect in the URI. */
+function unpaddedBase32(secret: Uint8Array): string {
+  const encoded = base32Encode(secret);
+  const pad = encoded.indexOf("=");
+  return pad === -1 ? encoded : encoded.slice(0, pad);
 }

@@ -55,3 +55,13 @@ test("generateSecret enforces the 16-byte floor and produces distinct secrets", 
   assert.equal(generateSecret().length, 20);
   assert.notDeepEqual(generateSecret(), generateSecret());
 });
+
+test("secret parameter is unpadded whether or not the encoding needs padding", () => {
+  for (const bytes of [16, 20]) {
+    // 16 bytes → 26 chars + 6 padding; 20 bytes → exactly 32 chars, no padding.
+    const secret = generateSecret(bytes);
+    const param = new URL(otpauthURL(secret, { label: "x" })).searchParams.get("secret");
+    assert.ok(param && !param.includes("="));
+    assert.deepEqual(base32Decode(param), secret);
+  }
+});

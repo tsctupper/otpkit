@@ -23,7 +23,12 @@ for (let i = 0; i < ALPHABET.length; i++) {
  * @throws {Error} on a character outside the Base32 alphabet or misplaced padding.
  */
 export function base32Decode(input: string): Uint8Array {
-  const clean = input.replace(/\s/g, "").replace(/=+$/, "");
+  const stripped = input.replace(/\s/g, "");
+  // Trim trailing padding with a loop, not /=+$/: that regex is quadratic on
+  // long runs of "=" followed by another character (polynomial ReDoS).
+  let end = stripped.length;
+  while (end > 0 && stripped.charCodeAt(end - 1) === 61 /* "=" */) end--;
+  const clean = stripped.slice(0, end);
   const out = new Uint8Array(Math.floor((clean.length * 5) / 8));
 
   let bits = 0;
