@@ -10,13 +10,24 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "LICENSE", "CHANGELOG.md"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "tsx --test test/*.test.ts",
-    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+    "coverage": "tsx --test --experimental-test-coverage --test-coverage-include='src/**' test/*.test.ts",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
+    "clean": "rm -rf dist coverage",
+    "prepublishOnly": "npm run clean && npm run check && npm run build"
   },
   "keywords": [
     "totp",
@@ -35,13 +46,24 @@
   ],
   "author": "Tyler Tupper (https://github.com/tsctupper)",
   "license": "MIT",
-  "engines": { "node": ">=18" },
-  "repository": { "type": "git", "url": "git+https://github.com/tsctupper/otpkit.git" },
-  "bugs": { "url": "https://github.com/tsctupper/otpkit/issues" },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tsctupper/otpkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tsctupper/otpkit/issues"
+  },
   "homepage": "https://github.com/tsctupper/otpkit#readme",
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^22.10.2",
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.10",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.72.1"
   }
 }

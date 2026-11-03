@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+
 - `verifyTotp` no longer throws when the drift window reaches past the epoch
   (e.g. verifying within the first period with `window: 1`); pre-epoch steps
   are skipped and verification returns `false` as expected.
@@ -18,12 +19,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   separator, matching the Key URI Format's canonical examples.
 - Empty secrets and non-digit tokens are rejected explicitly.
 
+- `otpauthURL` encodes spaces as `%20` instead of `+` in query values (issuer),
+  and validates `label`, `digits` and `period`.
+- `hotp` rejects counters above 2^64 − 1 instead of silently wrapping.
+
 ### Changed
+
 - CI now tests every supported Node line: 18, 20, 22, and 24.
 
 ## [1.0.0] — 2026-07-16
 
 ### Added
+
 - `hotp` — RFC 4226 HMAC-based OTP (SHA-1/256/512, configurable digits).
 - `totp` / `verifyTotp` — RFC 6238 time-based OTP with constant-time,
   drift-window verification.
