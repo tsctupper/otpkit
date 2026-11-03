@@ -1,6 +1,6 @@
 {
-  "name": "otpkit",
-  "version": "1.1.1",
+  "name": "@tsctupper/otpkit",
+  "version": "1.1.2",
   "description": "Zero-dependency, RFC-verified HOTP & TOTP (2FA / authenticator) codes for Node.js and TypeScript.",
   "type": "module",
   "types": "./dist/index.d.ts",

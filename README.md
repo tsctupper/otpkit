@@ -20,7 +20,7 @@ The one-time-password codes behind Google Authenticator, Authy, and every "enter
 ## Install
 
 ```sh
-npm install otpkit
+npm install @tsctupper/otpkit
 ```
 
 Node >= 18. Ships ESM + `.d.ts` types.
@@ -30,7 +30,7 @@ Node >= 18. Ships ESM + `.d.ts` types.
 ### Enroll a user
 
 ```ts
-import { generateSecret, otpauthURL, base32Encode } from "otpkit";
+import { generateSecret, otpauthURL, base32Encode } from "@tsctupper/otpkit";
 
 const secret = generateSecret(); // 20 random bytes (160 bits)
 const uri = otpauthURL(secret, {
@@ -46,7 +46,7 @@ const manualKey = base32Encode(secret);
 ### Verify a code
 
 ```ts
-import { verifyTotp, base32Decode } from "otpkit";
+import { verifyTotp, base32Decode } from "@tsctupper/otpkit";
 
 const secret = base32Decode(storedBase32Secret);
 const ok = verifyTotp(userSubmittedCode, secret); // ±1 step of drift by default
@@ -59,7 +59,7 @@ if (!ok) throw new Error("Invalid code");
 A valid code stays valid for its whole window, so an attacker who sees one can reuse it. `matchTotp` tells you _which_ time step matched, so you can refuse anything you have already accepted:
 
 ```ts
-import { matchTotp } from "otpkit";
+import { matchTotp } from "@tsctupper/otpkit";
 
 const step = matchTotp(userSubmittedCode, secret);
 if (step === null || step <= user.lastTotpStep) throw new Error("Invalid code");
@@ -70,7 +70,7 @@ user.lastTotpStep = step; // persist per user (e.g. in your database)
 ### Generate a code (client side, tests, or debugging)
 
 ```ts
-import { totp, hotp } from "otpkit";
+import { totp, hotp } from "@tsctupper/otpkit";
 
 totp(secret); // current 6-digit TOTP
 totp(secret, { digits: 8, algorithm: "SHA256", period: 60 });
