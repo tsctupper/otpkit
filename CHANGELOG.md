@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-11-03
+
+### Changed
+
+- The release workflow now authenticates to npm with trusted publishing (OIDC)
+  instead of a stored token. No library changes.
+
 ## [1.1.2] — 2026-11-03
 
 ### Changed
@@ -70,7 +77,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `base32Encode` / `base32Decode` — RFC 4648 Base32, tolerant decoding.
 - Test suite pinned to the RFC 4226, 6238, and 4648 official vectors.
 
-[Unreleased]: https://github.com/tsctupper/otpkit/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/tsctupper/otpkit/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/tsctupper/otpkit/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/tsctupper/otpkit/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/tsctupper/otpkit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/tsctupper/otpkit/compare/v1.0.0...v1.1.0
