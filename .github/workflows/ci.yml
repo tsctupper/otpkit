@@ -5,10 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node: [18, 20, 22, 24]
     name: node ${{ matrix.node }}
@@ -19,6 +27,27 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  quality:
+    runs-on: ubuntu-latest
+    name: lint, types & coverage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run coverage
+      - name: Verify the published package installs and imports
+        run: |
+          npm run build
+          npm pack --silent
+          mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          npm init -y >/dev/null && npm install --silent "$GITHUB_WORKSPACE"/otpkit-*.tgz
+          node --input-type=module -e "import { totp, generateSecret } from 'otpkit'; console.log(totp(generateSecret()))"

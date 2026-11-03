@@ -1,53 +1,66 @@
 // RFC 4648 §6 Base32 — the encoding authenticator apps use for shared secrets
 // (e.g. the string you scan or type into Google Authenticator). Decoding is
-// tolerant of lowercase, spaces, and missing `=` padding, because real-world
+// tolerant of lowercase, whitespace, and missing `=` padding, because real-world
 // secrets are copied by hand; encoding emits canonical padded output.
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
-const DECODE_MAP: Record<string, number> = {};
-for (let i = 0; i < ALPHABET.length; i++) DECODE_MAP[ALPHABET[i]] = i;
+// Flat lookup table: 255 marks "not in the alphabet". A typed array (rather than
+// an object map) avoids prototype-key surprises and keeps lookups branch-light.
+const DECODE_TABLE = new Uint8Array(128).fill(255);
+for (let i = 0; i < ALPHABET.length; i++) {
+  DECODE_TABLE[ALPHABET.charCodeAt(i)] = i;
+  DECODE_TABLE[ALPHABET.toLowerCase().charCodeAt(i)] = i;
+}
 
-/** Decode an RFC 4648 Base32 string to raw bytes. Padding/whitespace optional. */
+/**
+ * Decode an RFC 4648 Base32 string to raw bytes.
+ *
+ * Lowercase letters, whitespace, and trailing `=` padding are accepted. Anything
+ * else — including `=` anywhere but the end — throws, so a typo in a stored
+ * secret fails loudly instead of silently producing the wrong key.
+ *
+ * @throws {Error} on a character outside the Base32 alphabet or misplaced padding.
+ */
 export function base32Decode(input: string): Uint8Array {
-  const clean = input.replace(/[\s=]/g, "").toUpperCase();
-  if (clean.length === 0) return new Uint8Array(0);
+  const clean = input.replace(/\s/g, "").replace(/=+$/, "");
+  const out = new Uint8Array(Math.floor((clean.length * 5) / 8));
 
-  const out: number[] = [];
   let bits = 0;
   let value = 0;
+  let written = 0;
 
-  for (const ch of clean) {
-    const idx = DECODE_MAP[ch];
-    if (idx === undefined) throw new Error(`Invalid Base32 character: ${JSON.stringify(ch)}`);
-    value = (value << 5) | idx;
+  for (let i = 0; i < clean.length; i++) {
+    const code = clean.charCodeAt(i);
+    const idx = code < 128 ? DECODE_TABLE[code] : 255;
+    if (idx === undefined || idx === 255) {
+      throw new Error(`Invalid Base32 character: ${JSON.stringify(clean[i])}`);
+    }
+    value = ((value << 5) | idx) & 0xffff; // only the low 12 bits are ever needed
     bits += 5;
     if (bits >= 8) {
       bits -= 8;
-      out.push((value >>> bits) & 0xff);
+      out[written++] = (value >>> bits) & 0xff;
     }
   }
-  return Uint8Array.from(out);
+  return out;
 }
 
 /** Encode raw bytes to a canonical, `=`-padded RFC 4648 Base32 string. */
 export function base32Encode(bytes: Uint8Array): string {
-  if (bytes.length === 0) return "";
-
   let out = "";
   let bits = 0;
   let value = 0;
 
   for (const byte of bytes) {
-    value = (value << 8) | byte;
+    value = ((value << 8) | byte) & 0xffff;
     bits += 8;
     while (bits >= 5) {
       bits -= 5;
-      out += ALPHABET[(value >>> bits) & 0x1f];
+      out += ALPHABET.charAt((value >>> bits) & 0x1f);
     }
   }
-  if (bits > 0) out += ALPHABET[(value << (5 - bits)) & 0x1f];
+  if (bits > 0) out += ALPHABET.charAt((value << (5 - bits)) & 0x1f);
 
-  while (out.length % 8 !== 0) out += "=";
-  return out;
+  return out.padEnd(Math.ceil(out.length / 8) * 8, "=");
 }

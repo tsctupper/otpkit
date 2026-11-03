@@ -42,7 +42,7 @@ export function otpauthURL(secret: Uint8Array, params: OtpauthParams): string {
     : encodeURIComponent(label);
   // Built by hand rather than URLSearchParams: that encodes spaces as `+`,
   // which several authenticator apps show literally (e.g. "Acme+Corp").
-  const pairs = [
+  const pairs: [string, string][] = [
     ["secret", base32Encode(secret).replace(/=+$/, "")],
     ["algorithm", algorithm],
     ["digits", String(digits)],
