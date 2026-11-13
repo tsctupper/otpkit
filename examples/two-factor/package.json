@@ -1,0 +1,15 @@
+{
+  "name": "otpkit-two-factor-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node demo.mjs",
+    "test": "node --test flow.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@tsctupper/otpkit": "1.1.3"
+  }
+}

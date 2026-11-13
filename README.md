@@ -78,83 +78,25 @@ totp(secret, { digits: 8, algorithm: "SHA256", period: 60 });
 hotp(secret, 42); // counter-based (RFC 4226)
 ```
 
-## Example: two-factor login with Express
+## Try the complete second-factor flow
 
-A complete enroll → confirm → verify flow, including replay protection and attempt throttling. `users` stands in for your database; encrypt the secret at rest in a real app.
+The [runnable local example](https://github.com/tsctupper/otpkit/tree/main/examples/two-factor)
+uses the published npm package and a real authenticator app. It walks through
+enrollment, confirmation, a sign-in challenge, rejected codes, replay protection
+and attempt limits, with no server or database setup.
 
-```ts
-import express from "express";
-import { base32Decode, base32Encode, generateSecret, matchTotp, otpauthURL } from "@tsctupper/otpkit";
-
-interface UserRecord {
-  secret?: string; // Base32 secret, set once enrollment is confirmed
-  pendingSecret?: string; // generated but not yet confirmed by a valid code
-  lastStep: bigint; // highest TOTP step already accepted (replay protection)
-  failures: number;
-  lockedUntil: number; // ms since epoch
-}
-
-const users = new Map<string, UserRecord>();
-const MAX_FAILURES = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
-
-const app = express();
-app.use(express.json());
-
-// 1. Start enrollment: hand the user a QR code (render `uri`) and a manual key.
-app.post("/2fa/enroll", (req, res) => {
-  const { userId, email } = req.body as { userId: string; email: string };
-  const secret = generateSecret();
-  const record = users.get(userId) ?? { lastStep: -1n, failures: 0, lockedUntil: 0 };
-  record.pendingSecret = base32Encode(secret);
-  users.set(userId, record);
-  res.json({
-    uri: otpauthURL(secret, { label: email, issuer: "Acme" }),
-    manualKey: record.pendingSecret,
-  });
-});
-
-// 2. Check a submitted code against the user's secret, with throttling and replay protection.
-function checkCode(record: UserRecord, base32Secret: string, code: string): boolean {
-  if (Date.now() < record.lockedUntil) return false;
-  const step = matchTotp(code, base32Decode(base32Secret)); // ±1 step of drift
-  if (step === null || step <= record.lastStep) {
-    record.failures += 1;
-    if (record.failures >= MAX_FAILURES) {
-      record.lockedUntil = Date.now() + LOCKOUT_MS;
-      record.failures = 0;
-    }
-    return false;
-  }
-  record.lastStep = step; // a code can only be used once
-  record.failures = 0;
-  return true;
-}
-
-// 3. Confirm enrollment: only activate 2FA once the user proves their app works.
-app.post("/2fa/confirm", (req, res) => {
-  const { userId, code } = req.body as { userId: string; code: string };
-  const record = users.get(userId);
-  if (!record?.pendingSecret || !checkCode(record, record.pendingSecret, code)) {
-    res.status(401).json({ error: "Invalid code" });
-    return;
-  }
-  record.secret = record.pendingSecret;
-  record.pendingSecret = undefined;
-  res.json({ enabled: true });
-});
-
-// 4. Second factor at login.
-app.post("/2fa/verify", (req, res) => {
-  const { userId, code } = req.body as { userId: string; code: string };
-  const record = users.get(userId);
-  if (!record?.secret || !checkCode(record, record.secret, code)) {
-    res.status(401).json({ error: "Invalid code" });
-    return;
-  }
-  res.json({ ok: true });
-});
+```sh
+git clone https://github.com/tsctupper/otpkit.git
+cd otpkit/examples/two-factor
+npm ci
+npm start
 ```
+
+This demonstrates the second factor, not a complete login system. Its one demo
+account lives in memory. The example explains the production requirements for
+authenticated account identity, encrypted secret storage, atomic replay protection,
+shared rate limits and recovery. No account identifier supplied by a caller is
+used to authorize enrollment or verification.
 
 ## API
 
@@ -191,7 +133,7 @@ Run them yourself: `npm test`.
 - **`bigint` counters.** The RFC 4226 counter is 64 bits wide. JavaScript numbers lose precision past 2^53, so counters are `bigint` internally and anything above 2^64 − 1 is rejected rather than wrapped.
 - **`matchTotp` returns the step, not a boolean.** Replay protection needs to know _which_ step was accepted. Returning it keeps the library stateless while making the safe pattern the easy one. `verifyTotp` is a thin wrapper for when you don't need it.
 - **Bounded work on untrusted input.** Each step in the drift window costs one HMAC, so the window is capped at 100. Malformed tokens return `false` instead of throwing, so bad input can't be used to crash a login path.
-- **Scope.** It generates and verifies codes and builds the enrollment URI. It does not render QR codes, store secrets or rate-limit; those belong to your application, and the Express example above shows one way to do it.
+- **Scope.** It generates and verifies codes and builds the enrollment URI. It does not render QR codes, store secrets or rate-limit; those belong to your application, and the runnable example above demonstrates the application boundary.
 
 ## Security notes
 
