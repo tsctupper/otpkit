@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Runnable local two-factor example using the published npm package, covering
+  enrollment, confirmation, sign-in challenges, replay rejection and attempt
+  limits. Includes integration tests and production integration boundaries.
+
 ## [1.1.3] — 2026-11-03
 
 ### Changed

@@ -15,4 +15,5 @@ export default tseslint.config(
   // node:test registers top-level tests via un-awaited calls by design.
   { files: ["test/**"], rules: { "@typescript-eslint/no-floating-promises": "off" } },
   { files: ["eslint.config.js"], ...tseslint.configs.disableTypeChecked },
+  { files: ["examples/**/*.mjs"], ...tseslint.configs.disableTypeChecked },
 );
