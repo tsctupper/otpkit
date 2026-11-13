@@ -188,7 +188,7 @@ Run them yourself: `npm test`.
 
 - **Only `node:crypto`.** HMAC and `timingSafeEqual` come from Node's standard library, so there is no dependency tree to audit and nothing for a supply-chain attack to land in.
 - **Secrets are raw bytes.** Functions take a `Uint8Array`, not a string, so the Base32-versus-raw-bytes mix-up that breaks many TOTP integrations can't happen silently. Base32 is a separate, explicit step.
-- **`bigint` counters.** The RFC 4226 counter is 64 bits wide. JavaScript numbers lose precision past 2^53, so counters are `bigint` internally and anything above 2^64 − 1 is rejected rather than wrapped.
+- **`bigint` counters.** The RFC 4226 counter is 64 bits wide. Numeric counters must be safe integers (at most `Number.MAX_SAFE_INTEGER`); larger values must be supplied as `bigint`, such as `9007199254740993n`. Converting an already rounded number to `bigint` cannot recover its original value. Counters are `bigint` internally and anything outside 0 through 2^64 − 1 is rejected rather than wrapped.
 - **`matchTotp` returns the step, not a boolean.** Replay protection needs to know _which_ step was accepted. Returning it keeps the library stateless while making the safe pattern the easy one. `verifyTotp` is a thin wrapper for when you don't need it.
 - **Bounded work on untrusted input.** Each step in the drift window costs one HMAC, so the window is capped at 100. Malformed tokens return `false` instead of throwing, so bad input can't be used to crash a login path.
 - **Scope.** It generates and verifies codes and builds the enrollment URI. It does not render QR codes, store secrets or rate-limit; those belong to your application, and the Express example above shows one way to do it.
