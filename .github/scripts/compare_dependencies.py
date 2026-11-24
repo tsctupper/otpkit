@@ -1,7 +1,8 @@
 """Compare two Git trees using the scanner installed beside this trusted script."""
+
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 # CI extracts both modules into its own temporary directory before starting Python in isolated mode.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -25,11 +26,19 @@ def main():
             for sha in (base_sha, candidate_sha)
         ]
         result = compare(baseline, candidate)
-        retained_packages = {item["name"] for item in candidate["dependencies"] if item["ecosystem"] == "npm"}
-        lost_proof = baseline.get("first_party_provenance", {}).keys() - candidate.get("first_party_provenance", {}).keys()
+        retained_packages = {
+            item["name"] for item in candidate["dependencies"] if item["ecosystem"] == "npm"
+        }
+        lost_proof = (
+            baseline.get("first_party_provenance", {}).keys()
+            - candidate.get("first_party_provenance", {}).keys()
+        )
         if lost_proof & retained_packages:
-            result.update(state="first_party_provenance_changed", exit_code=2,
-                          packages_requiring_review=sorted(lost_proof & retained_packages))
+            result.update(
+                state="first_party_provenance_changed",
+                exit_code=2,
+                packages_requiring_review=sorted(lost_proof & retained_packages),
+            )
         result["candidate_counts"] = candidate["category_counts"]
         result["base_counts"] = baseline["category_counts"]
         result["npm_units"] = candidate.get("npm_units")
