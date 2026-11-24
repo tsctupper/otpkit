@@ -23,6 +23,26 @@ jobs:
     name: node ${{ matrix.node }}
     steps:
       - uses: actions/checkout@v7
+      - name: Check for dependency additions
+        if: matrix.node == 22
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git fetch --no-tags --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$BASE_SHA"
+          path=.github/scripts/dependency_inventory.py
+          test -s "$path"
+          guard="$RUNNER_TEMP/dependency_inventory.py"
+          if [[ "$BASE_SHA" == "d78a18d9d9a215fb0df9749a7e2e1f464b4870e4" ]]; then
+            # Bootstrap from the reviewed scanner on this single pre-install revision.
+            echo "55e099ecea1aa9884bfd3ae0326d1cf0ab06e271ec0a9d2aaf61532b7d7e08de  $path" | sha256sum -c -
+            cp "$path" "$guard"
+          else
+            git show "$BASE_SHA:$path" > "$guard"
+          fi
+          scan=(python3 -I "$guard" --repo . --id "$GITHUB_REPOSITORY" --owner maintainer)
+          "${scan[@]}" --ref "$BASE_SHA" --out "$RUNNER_TEMP/dependency-baseline.json"
+          "${scan[@]}" --ref "$GITHUB_SHA" --baseline "$RUNNER_TEMP/dependency-baseline.json"
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}

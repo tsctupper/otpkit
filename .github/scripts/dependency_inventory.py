@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Pinned-source dependency inventory and additions ratchet; Python stdlib only.
+No network, package execution, install, product test, settings or source mutation.
+Unknown/unread/provenance coverage is retained; absence of a manifest is not zero.
+"""
+import argparse,ast,collections,datetime as dt,hashlib,json,pathlib,re,subprocess,sys,tomllib
+CATEGORIES=['runtime_direct','runtime_resolved_placements','build_test_dev_direct','build_test_dev_resolved_placements','native','vendored_cdn','ci_actions_tools','hosted_services','source_import_references','first_party_reuse']
+FLOOR={'machine_os':'Existing macOS/Linux/Windows or browser host as applicable; exact product deployment constraints retained separately','runtimes_compilers_stdlib':['Installed Python interpreter and standard library','Installed Node.js runtime and built-in modules','Installed Swift/Clang toolchain and language standard libraries','OS-provided shell and Git executable for source/CI operations'],'first_party_platform_primitives':['Apple SDKs/Xcode and shipped OS frameworks','Browser Web APIs'],'not_exempt':['npm/pip/Swift/other packages, even compilers distributed through package manifests','External CI actions/tools and runner-installed non-floor tools','Vendored/copied upstream code, remote scripts/CDN assets','Hosted GitHub/Vercel/Supabase/Codemagic/npm/Apple delivery services (separate operating dependencies)'],'limits':'Visible execution floor, not permission for blanket exemptions. Product/platform owners must resolve genuine incompatible constraints; no count is reduced by relabeling or copying.'}
+NODE_CORE=set('assert async_hooks buffer child_process cluster console constants crypto dgram diagnostics_channel dns domain events fs http http2 https inspector module net os path perf_hooks process punycode querystring readline repl stream string_decoder sys test timers tls trace_events tty url util v8 vm wasi worker_threads zlib sqlite'.split())
+APPLE=set('AppKit Foundation SwiftUI WebKit UIKit Security Cocoa SafariServices OSLog UniformTypeIdentifiers CoreGraphics CoreFoundation Darwin Dispatch Combine XCTest AuthenticationServices UserNotifications AVFoundation Photos PhotosUI CoreLocation MapKit Network StoreKit IOKit ServiceManagement Swift Testing'.split())
+SERVICES={'github':'github.com|api.github.com|githubusercontent.com','vercel':'vercel.com|vercel.app','supabase':'supabase.com|supabase.co','codemagic':'codemagic.io','npm':'registry.npmjs.org','apple_delivery':'appstoreconnect.apple.com|testflight.apple.com|developer.apple.com','sentry':'sentry.io','openai':'api.openai.com','google_fonts':'fonts.googleapis.com|fonts.gstatic.com','resend':'api.resend.com|resend.com'}
+def digest(data):return hashlib.sha256(data).hexdigest()
+def git(repo,*args):return subprocess.check_output(['git','-C',str(repo),*args],stderr=subprocess.DEVNULL)
+def tracked(repo,ref):
+ listing=git(repo,'ls-tree','-r','-z','--full-tree',ref);files={};links=[]
+ for row in listing.split(b'\0'):
+  if not row:continue
+  info,name=row.split(b'\t',1);mode,kind,oid=info.decode().split();name=name.decode('utf-8','surrogateescape')
+  if mode=='160000':links.append((name,oid))
+  elif kind=='blob':files[name]=oid
+ return files,links
+
+def source_candidate(path):
+ name=pathlib.PurePosixPath(path).name;lower=path.lower();suffix=pathlib.PurePosixPath(path).suffix.lower()
+ return name in {'skills-lock.json','package.json','package-lock.json','npm-shrinkwrap.json','pyproject.toml','Package.swift','Package.resolved','Podfile.lock','.gitmodules','Cargo.toml','Cargo.lock','go.mod','go.sum','Gemfile','Gemfile.lock','yarn.lock','pnpm-lock.yaml','poetry.lock','uv.lock','Pipfile','Pipfile.lock','CMakeLists.txt','Dockerfile','README.md'} or name.startswith('requirements') and name.endswith('.txt') or suffix in {'.py','.js','.mjs','.cjs','.ts','.tsx','.jsx','.swift','.html','.css','.yml','.yaml','.toml','.sh','.wasm','.pbxproj','.xcproj','.gradle','.kts'} or 'license' in name.lower() or 'notice' in name.lower() or any(part in lower.split('/') for part in ['vendor','vendored','third_party','third-party'])
+
+def inspect_files(files,*,source_id,ref,owner,reviewed_provenance=False,listing_complete=True,first_party_packages=None):
+ entries={};unknown=[];sources=[]
+ def add(category,ecosystem,name,version,path,kind):
+  # Installation/declaration/use-site counts are separate from unique package count.
+  ident=json.dumps([category,ecosystem,name,path,kind],separators=(',',':'))
+  entries[ident]={'id':ident,'category':category,'ecosystem':ecosystem,'name':name,'version_or_ref':str(version or 'unknown'),'path':path,'kind':kind,'owner':owner}
+ def gap(path,reason):unknown.append({'path':path,'reason':reason,'owner':owner})
+ def text(path,raw):
+  if raw is None:gap(path,'tracked source unread, oversized or unsupported blob');return None
+  sources.append({'path':path,'sha256':digest(raw),'bytes':len(raw)})
+  try:return raw.decode('utf-8')
+  except UnicodeDecodeError:gap(path,'binary dependency/provenance requires owner review');return None
+ local_py={pathlib.PurePosixPath(p).stem for p in files if p.endswith('.py')}|{p.split('/')[0] for p in files if p.endswith('/__init__.py')}
+ npm_scopes={}
+ for manifest,raw in files.items():
+  if pathlib.PurePosixPath(manifest).name!='package.json' or raw is None:continue
+  try:
+   data=json.loads(raw);npm_scopes[str(pathlib.PurePosixPath(manifest).parent)]={name for group in ['dependencies','devDependencies','peerDependencies','optionalDependencies'] for name in data.get(group,{})}
+  except (ValueError,TypeError,AttributeError):pass
+ manifests_found=False
+ for path,raw in sorted(files.items()):
+  name=pathlib.PurePosixPath(path).name;lower=path.lower();suffix=pathlib.PurePosixPath(path).suffix.lower()
+  is_manifest=name in {'skills-lock.json','package.json','package-lock.json','npm-shrinkwrap.json','pyproject.toml','requirements.txt','requirements-dev.txt','Package.swift','Package.resolved','Podfile.lock','.gitmodules','Cargo.toml','Cargo.lock','go.mod','go.sum','Gemfile','Gemfile.lock','yarn.lock','pnpm-lock.yaml','poetry.lock','uv.lock','Pipfile','Pipfile.lock','CMakeLists.txt','codemagic.yaml','codemagic.yml'} or bool(re.search(r'(^|/)(requirements[^/]*\.txt|[^/]*\.gradle(\.kts)?)$',path))
+  interesting=source_candidate(path)
+  if not interesting:continue
+  value=text(path,raw)
+  if value is None:continue
+  if is_manifest:manifests_found=True
+  try:
+   if name=='skills-lock.json':
+    data=json.loads(value)
+    for skill,metadata in data.get('skills',{}).items():add('vendored_cdn','agent_skill',skill,metadata.get('computedHash') or metadata.get('source') or 'unresolved',path,'third_party_skill')
+   elif name=='package.json':
+    data=json.loads(value)
+    for key in ['dependencies','optionalDependencies','peerDependencies','devDependencies']:
+     for package,version in data.get(key,{}).items():
+      cat='build_test_dev_direct' if key=='devDependencies' else 'runtime_direct';add(cat,'npm',package,version,path,key)
+      if str(version).startswith(('file:','link:','workspace:')):gap(path,'local package reference needs first-party provenance/owned dependency-closure review: '+package)
+   elif name in {'package-lock.json','npm-shrinkwrap.json'}:
+    data=json.loads(value)
+    if data.get('lockfileVersion') not in [2,3] or not isinstance(data.get('packages'),dict):gap(path,'npm lock format unsupported/incomplete; transitive count unknown')
+    for location,package in data.get('packages',{}).items():
+     if not location:continue
+     package_name=package.get('name') or location.rsplit('node_modules/',1)[-1]
+     add('build_test_dev_resolved_placements' if package.get('dev') is True else 'runtime_resolved_placements','npm',package_name,package.get('version'),path+':'+location,'locked_installation')
+   elif name=='pyproject.toml':
+    data=tomllib.loads(value)
+    for dep in data.get('project',{}).get('dependencies',[]):add('runtime_direct','python',re.split(r'[ <>=!~\[;]',dep)[0],dep,path,'project_dependency')
+    for group,deps in data.get('project',{}).get('optional-dependencies',{}).items():
+     for dep in deps:add('build_test_dev_direct','python',re.split(r'[ <>=!~\[;]',dep)[0],dep,path,'optional_group:'+group)
+    for dep in data.get('build-system',{}).get('requires',[]):add('build_test_dev_direct','python',re.split(r'[ <>=!~\[;]',dep)[0],dep,path,'build_system')
+    if data.get('tool',{}).get('poetry'):gap(path,'Poetry-specific dependency tables require parsing/owner inventory')
+   elif name.startswith('requirements') and name.endswith('.txt'):
+    for line in value.splitlines():
+     line=line.strip()
+     if not line or line.startswith('#'):continue
+     if line.startswith('-'):gap(path,'requirements include/options need closure review');continue
+     add('runtime_direct','python',re.split(r'[ <>=!~\[;]',line)[0],line,path,'requirement')
+    gap(path,'requirements alone do not resolve full transitive environment')
+   elif name=='Package.resolved':
+    data=json.loads(value);pins=data.get('pins',data.get('object',{}).get('pins',[]))
+    for pin in pins:add('native','swift',pin.get('identity') or pin.get('package') or pin.get('repositoryURL'),pin.get('state',{}).get('version') or pin.get('state',{}).get('revision'),path,'locked_pin')
+   elif name=='Package.swift':
+    for url in re.findall(r'\.package\s*\(\s*url:\s*"([^"]+)"',value):add('native','swift',url,'declared',path,'remote_package')
+    if '.package(' in value and not re.search(r'\.package\s*\(\s*url:',value):gap(path,'non-literal/local Swift package closure/provenance requires review')
+   elif name=='Podfile.lock':
+    for package,version in re.findall(r'^\s{2}- ([^ (:]+) \(([^)]+)\)',value,re.M):add('native','cocoapods',package,version,path,'locked_pod')
+    gap(path,'Pod lock parsing bounded; external/local-source metadata and installed native closure require owner review')
+   elif name=='.gitmodules':
+    for url in re.findall(r'^\s*url\s*=\s*(.+)',value,re.M):add('vendored_cdn','git',url,'submodule',path,'external_source')
+   elif name in {'Cargo.toml','Cargo.lock','go.mod','go.sum','Gemfile','Gemfile.lock','yarn.lock','pnpm-lock.yaml','poetry.lock','uv.lock','Pipfile','Pipfile.lock','CMakeLists.txt'} or '.gradle' in name:gap(path,'recognized dependency manifest/lock not parsed by initial inventory; owner follow-through required')
+  except (ValueError,TypeError,AttributeError):gap(path,'manifest malformed or unsupported fields; not zero')
+  if suffix=='.py':
+   try:
+    tree=ast.parse(value)
+    for node in ast.walk(tree):
+     names=[n.name.split('.')[0] for n in node.names] if isinstance(node,ast.Import) else [node.module.split('.')[0]] if isinstance(node,ast.ImportFrom) and node.module and node.level==0 else []
+     for module in names:
+      if module not in sys.stdlib_module_names and module not in local_py:add('source_import_references','python_import',module,'unresolved',path,'source_import')
+   except (SyntaxError,ValueError):gap(path,'Python source import analysis unavailable')
+  if suffix in {'.js','.mjs','.cjs','.ts','.tsx','.jsx'}:
+   for specifier in re.findall(r'(?:from\s*|import\s*\(|require\s*\(|import\s+)[\'\"]([^\'\"]+)[\'\"]',value):
+    if specifier.startswith(('.','/','@/','~/','#','node:')):continue
+    if specifier.split('/')[0] in NODE_CORE:continue
+    if specifier.startswith(('http:','https:')):add('vendored_cdn','url',specifier,'remote',path,'remote_import')
+    else:
+     package='/'.join(specifier.split('/')[:2]) if specifier.startswith('@') else specifier.split('/')[0];add('source_import_references','js_import',package,'unresolved',path,'source_import')
+     directory=pathlib.PurePosixPath(path).parent;ancestors=[directory,*directory.parents];scope=next((str(parent) for parent in ancestors if package in npm_scopes.get(str(parent),set())),None)
+     if scope is None:gap(path,'External JS import lacks declaration in available ancestor package scopes: '+package)
+  if suffix=='.swift':
+   for module in re.findall(r'^\s*(?:@testable\s+)?import\s+(\w+)',value,re.M):
+    if module not in APPLE:add('native','swift_import',module,'unresolved',path,'source_import')
+  if suffix in {'.pbxproj','.xcproj'}:
+   for url in re.findall(r'repositoryURL\s*=\s*"?([^;"\s]+)',value):add('native','xcode',url,'declared',path,'remote_package')
+  if path.startswith('.github/workflows/') and suffix in {'.yml','.yaml'}:
+   add('hosted_services','service','github_actions','operating',path,'hosted_ci')
+   for action in re.findall(r'^\s*(?:-\s*)?uses:\s*[\'\"]?([^\s\'\"#]+)',value,re.M):
+    if not action.startswith('./'):add('ci_actions_tools','github_action',action.split('@')[0],action.partition('@')[2] or 'unpinned',path,'external_action')
+   for manager,tool in re.findall(r'\b(brew|pip3?|uv)\s+(?:install|tool install)\s+([\w@./-]+)',value):add('ci_actions_tools',manager,tool,'declared',path,'install_command')
+  for image in re.findall(r'^(?:FROM|\s*image:)\s*[\'\"]?([^\s\'\"]+)',value,re.M):add('ci_actions_tools','container_image',image,'declared',path,'container_image')
+  if name.startswith('codemagic.') :add('hosted_services','service','codemagic','operating',path,'hosted_ci')
+  if suffix in {'.html','.css'}:
+   for url in re.findall(r'(?:src=|@import\s*|url\()[\'\"]?(https?://[^\s\'\"<>)]*)',value):add('vendored_cdn','url',url,'remote',path,'remote_asset')
+  if any(part in lower.split('/') for part in ['vendor','vendored','third_party','third-party']) or lower.endswith(('.min.js','.wasm')):add('vendored_cdn','source',path,'provenance_review',path,'vendored_or_compiled_candidate')
+  if re.search(r'^\s*(?:(?://|#|/\*+!?|\*|<!--)\s*)?Copyright(?:\s|\(c\)|©)[^\n]*(Microsoft|Mozilla|Facebook|Ionic|Expo|Google|OpenJS)',value,re.I|re.M):add('vendored_cdn','source',path,'attribution',path,'upstream_attribution')
+  # Only operational code/config (plus remote profile images); ordinary doc links are not service reliance.
+  operational=suffix!='.md' or name=='README.md' and '![' in value
+  if operational:
+   for service,hosts in SERVICES.items():
+    if re.search(r'https?://[^\s\'\"<>]*(?:'+hosts.replace('.',r'\.')+r')',value):add('hosted_services','service',service,'operating',path,'source_endpoint')
+ if not listing_complete:gap('*','source listing incomplete')
+ if not reviewed_provenance:gap('*','Copied/hidden/vendored code, generated/install-time content and services require named owner provenance/closure review; scanner absence is not zero proof')
+ if not manifests_found and not reviewed_provenance:gap('*','No recognized package manifest; source/native/tool/operating dependencies still require review')
+ # Exact, explicit provenance only; no namespace exemption.
+ first_party_packages=first_party_packages or {}
+ root_package={}
+ try:root_package=json.loads(files.get('package.json') or b'{}')
+ except (ValueError,TypeError):pass
+ locks={};manifests={}
+ for path,raw in files.items():
+  if raw is None:continue
+  try:
+   if pathlib.PurePosixPath(path).name=='package.json':manifests[str(pathlib.PurePosixPath(path).parent)]=(path,json.loads(raw))
+   elif pathlib.PurePosixPath(path).name in {'package-lock.json','npm-shrinkwrap.json'}:locks[str(pathlib.PurePosixPath(path).parent)]=(path,json.loads(raw))
+  except (ValueError,TypeError):pass
+ verified_first_party={}
+ for package,proof in first_party_packages.items():
+  matching=[entry for _,lock in locks.values() for loc,entry in lock.get('packages',{}).items() if loc.endswith('node_modules/'+package)]
+  if root_package.get('name')==package and proof.get('repository')==source_id and proof.get('version') and proof.get('gitHead') and proof.get('integrity') and matching and all(e.get('version')==proof['version'] and e.get('integrity')==proof['integrity'] for e in matching):
+   verified_first_party[package]=proof
+ for entry in entries.values():
+  if entry['name'] in verified_first_party and entry['ecosystem'] in {'npm','js_import'}:
+   entry['external_category_before_provenance']=entry['category'];entry['category']='first_party_reuse';entry['provenance']=verified_first_party[entry['name']]
+ units=[];unresolved=[]
+ for directory,(manifest_path,data) in sorted(manifests.items()):
+  declarations=[e for e in entries.values() if e['ecosystem']=='npm' and e['path']==manifest_path and e['kind']!='locked_installation']
+  lock_info=locks.get(directory)
+  item={'manifest':manifest_path,'declarations':len(declarations),'external_runtime_declarations':sum(e['category']=='runtime_direct' for e in declarations),'external_build_test_dev_declarations':sum(e['category']=='build_test_dev_direct' for e in declarations),'first_party_declarations':sum(e['category']=='first_party_reuse' for e in declarations),'resolved_placements_total':None,'direct_resolved_placements':None,'additional_transitive_placements':None}
+  if not lock_info:
+   item['additional_unknown_reason']='no corresponding parsed lock';unresolved.append(manifest_path)
+  else:
+   lock_path,lock=lock_info;packages=lock.get('packages')
+   if lock.get('lockfileVersion') not in [2,3] or not isinstance(packages,dict) or data.get('workspaces') or any(p and not p.startswith('node_modules/') or v.get('link') for p,v in (packages or {}).items()):
+    item['additional_unknown_reason']='workspace/link/split or unsupported lock graph';unresolved.append(manifest_path)
+   else:
+    placements={loc for loc in packages if loc};direct={"node_modules/"+e['name'] for e in declarations}
+    item['resolved_placements_total']=len(placements)
+    if direct<=placements:
+     item['direct_resolved_placements']=len(direct);item['additional_transitive_placements']=len(placements-direct)
+    else:item['additional_unknown_reason']='declared roots lack deterministic lock placement';unresolved.append(manifest_path)
+  units.append(item)
+ for directory,(lock_path,lock) in locks.items():
+  if directory not in manifests:unresolved.append(lock_path)
+ npm_entries=[e for e in entries.values() if e['ecosystem']=='npm'];placements=[e for e in npm_entries if e['kind']=='locked_installation'];declared=[e for e in npm_entries if e['kind']!='locked_installation']
+ npm_units={'declarations_total':len(declared),'external_runtime_declarations':sum(e['category']=='runtime_direct' for e in declared),'external_build_test_dev_declarations':sum(e['category']=='build_test_dev_direct' for e in declared),'first_party_declarations':sum(e['category']=='first_party_reuse' for e in declared),'resolved_placements_total':len(placements),'external_resolved_placements':sum(e['category']!='first_party_reuse' for e in placements),'first_party_resolved_placements':sum(e['category']=='first_party_reuse' for e in placements),'direct_resolved_placements':None if unresolved else sum(x['direct_resolved_placements'] or 0 for x in units),'additional_transitive_placements':None if unresolved else sum(x['additional_transitive_placements'] or 0 for x in units),'projects':units,'additional_unknown_scopes':sorted(set(unresolved)),'units':'Declarations, total resolved placements, and additional transitive placements are distinct. Multiple disjoint lock projects add installation sites; workspace/unresolved/split relationships stay unknown.'}
+ counts={c:sum(e['category']==c for e in entries.values()) for c in CATEGORIES};known=sum(counts[c] for c in CATEGORIES if c not in {'hosted_services','first_party_reuse'})
+ state='nonzero' if known else 'unknown' if unknown else 'zero'
+ return {'schema_version':1,'id':source_id,'source_sha':ref,'owner':owner,'execution_floor':FLOOR,'dependency_state':state,'category_counts':counts,'npm_units':npm_units,'first_party_provenance':verified_first_party,'known_code_dependency_sites':known,'unique_declared_or_locked_packages':len({(e['ecosystem'],e['name']) for e in entries.values() if e['ecosystem'] in ['npm','python','swift','cocoapods']}),'dependencies':sorted(entries.values(),key=lambda e:e['id']),'unknowns':sorted(unknown,key=lambda e:(e['path'],e['reason'])),'source_listing_complete':listing_complete,'provenance_reviewed':reviewed_provenance,'source_fingerprints':sorted(sources,key=lambda e:e['path']),'count_units':'Declarations, locked installations and source/use sites are separately categorized; counts are not summed as distinct packages. Hosted services excluded from code-dependency total. Unknown coverage is retained.'}
+
+def scan_repo(repo,ref,source_id,owner,reviewed_provenance=False,first_party_packages=None):
+ try:
+  resolved=git(repo,'rev-parse',ref+'^{commit}').decode().strip();paths,links=tracked(repo,resolved)
+  selected={p:None for p in paths};wanted=[(p,oid) for p,oid in paths.items() if source_candidate(p)]
+  # One bounded batch reads tracked Git objects, never the worktree or installed node_modules.
+  batch=subprocess.run(['git','-C',str(repo),'cat-file','--batch'],input=''.join(oid+'\n' for _,oid in wanted).encode(),stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,check=True).stdout;offset=0
+  for path,oid in wanted:
+   end=batch.index(b'\n',offset);header=batch[offset:end].decode().split();size=int(header[2]);offset=end+1
+   selected[path]=batch[offset:offset+size] if size<=2_000_000 else None;offset+=size+1
+  result=inspect_files(selected,source_id=source_id,ref=resolved,owner=owner,reviewed_provenance=reviewed_provenance,first_party_packages=first_party_packages)
+  for path,oid in links:
+   e={'id':json.dumps(['vendored_cdn','gitlink',path]),'category':'vendored_cdn','ecosystem':'gitlink','name':path,'version_or_ref':oid,'path':path,'kind':'submodule','owner':owner};result['dependencies'].append(e);result['category_counts']['vendored_cdn']+=1;result['known_code_dependency_sites']+=1;result['dependency_state']='nonzero'
+  result['git_directory']=str(pathlib.Path(repo).resolve());result['tracked_file_count']=len(paths);result['source_tree']=git(repo,'rev-parse',resolved+'^{tree}').decode().strip();return result
+ except (OSError,ValueError,IndexError,subprocess.SubprocessError):return {'schema_version':1,'id':source_id,'source_sha':ref,'owner':owner,'execution_floor':FLOOR,'dependency_state':'unknown','category_counts':{c:None for c in CATEGORIES},'dependencies':[],'unknowns':[{'path':'*','reason':'Pinned source/listing/blob read unavailable','owner':owner}],'source_listing_complete':False,'source_fingerprints':[]}
+
+def compare(baseline,current):
+ old={e['id']:e for e in baseline.get('dependencies',[])};new={e['id']:e for e in current.get('dependencies',[])}
+ additions=[new[k] for k in sorted(new.keys()-old.keys())];removed=[old[k] for k in sorted(old.keys()-new.keys())]
+ relocated=[]
+ # A declaration may move to an ancestor if the surviving import resolves there.
+ # Pair only same ecosystem/category/name/pin/kind, and require net site count unchanged.
+ for added in list(additions):
+  if added['ecosystem']!='npm' or added['category'] not in {'runtime_direct','build_test_dev_direct'}:continue
+  previous=next((r for r in removed if all(r.get(k)==added.get(k) for k in ['category','ecosystem','name','version_or_ref','kind'])),None)
+  if previous is not None:
+   removed.remove(previous);additions.remove(added);relocated.append({'before':previous,'after':added,'credit':'same dependency retained, no removal'})
+ changed=[{'before':old[k],'after':new[k]} for k in sorted(new.keys()&old.keys()) if old[k].get('version_or_ref')!=new[k].get('version_or_ref')]
+ old_gaps={(g['path'],g['reason']) for g in baseline.get('unknowns',[])};new_gaps=[g for g in current.get('unknowns',[]) if (g['path'],g['reason']) not in old_gaps]
+ # Unsupported manifests cannot change silently behind an unchanged parser gap.
+ old_hash={f['path']:f['sha256'] for f in baseline.get('source_fingerprints',[])};new_hash={f['path']:f['sha256'] for f in current.get('source_fingerprints',[])}
+ changed_unknown=[g['path'] for g in current.get('unknowns',[]) if g['path']!='*' and old_hash.get(g['path'])!=new_hash.get(g['path'])]
+ invalid=baseline.get('id')!=current.get('id') or not current.get('source_listing_complete') or not baseline.get('source_listing_complete')
+ return {'repository':current.get('id'),'baseline_sha':baseline.get('source_sha'),'current_sha':current.get('source_sha'),'state':'unknown' if invalid else 'blocked_additions_or_unreviewed_changes' if additions or changed or new_gaps or changed_unknown else 'no_additions_observed','additions':additions,'relocated_declarations':relocated,'removed':removed,'verified_removal_credit':0,'removal_credit_boundary':'Observed entries removed only; copying/wrapping/relabeling is not removal. Product owner must qualify provenance, behavior and applicable release before credit.','changed_pins':changed,'new_unknowns':new_gaps,'changed_unparsed_scopes':sorted(set(changed_unknown)),'exit_code':3 if invalid else 2 if additions or changed or new_gaps or changed_unknown else 0,'scope':'Known supported source categories only; retained unknown provenance is not verified zero. Compare with trusted default baseline, not a PR-edited allowlist. No baseline auto-accept/update.'}
+
+def main():
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--repo',type=pathlib.Path,required=True);p.add_argument('--ref',default='HEAD');p.add_argument('--id',required=True);p.add_argument('--owner',required=True);p.add_argument('--baseline',type=pathlib.Path);p.add_argument('--out',type=pathlib.Path);a=p.parse_args()
+ baseline=json.loads(a.baseline.read_text()) if a.baseline else None
+ if baseline is not None:
+  baseline=next((r for r in baseline.get('repositories',[]) if r['id']==a.id),None) if 'repositories' in baseline else baseline
+ current=scan_repo(a.repo,a.ref,a.id,a.owner,first_party_packages=(baseline or {}).get('first_party_provenance'))
+ if a.baseline:
+  baseline=baseline or {}; baseline=next((r for r in baseline.get('repositories',[]) if r['id']==a.id),None) if 'repositories' in baseline else baseline
+  result=compare(baseline or {},current);code=result['exit_code']
+ else:result=current;code=3 if not current['source_listing_complete'] else 0
+ raw=json.dumps(result,indent=2)+'\n'
+ if a.out:a.out.write_text(raw);a.out.chmod(0o600)
+ else:print(raw,end='')
+ return code
+if __name__=='__main__':raise SystemExit(main())
