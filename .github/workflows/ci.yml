@@ -29,6 +29,10 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Test the runnable example against the published package
+        run: |
+          npm ci --prefix examples/two-factor --ignore-scripts
+          npm test --prefix examples/two-factor
 
   quality:
     runs-on: ubuntu-latest
