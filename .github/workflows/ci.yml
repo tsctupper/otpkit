@@ -28,30 +28,26 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Run compatibility tests
+        if: matrix.node != 22
+        run: npm test
+      - name: Run the library tests with coverage
+        if: matrix.node == 22
+        run: npm run coverage
+      - name: Check types, lint and formatting
+        if: matrix.node == 22
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run format:check
       - run: npm run build
       - name: Test the runnable example against the published package
         run: |
           npm ci --prefix examples/two-factor --ignore-scripts
           npm test --prefix examples/two-factor
-
-  quality:
-    runs-on: ubuntu-latest
-    name: lint, types & coverage
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm run coverage
-      - name: Verify the published package installs and imports
+      - name: Install and import the packed library
+        if: matrix.node == 22
         run: |
-          npm run build
           npm pack --silent
           mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           npm init -y >/dev/null && npm install --silent "$GITHUB_WORKSPACE"/tsctupper-otpkit-*.tgz
