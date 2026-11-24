@@ -10,6 +10,9 @@ npm run check      # typecheck + lint + format check + tests
 npm run coverage   # report line and branch coverage
 ```
 
+Tests compile with the project’s TypeScript compiler and run with `node --test`.
+Use Node 22 for the source-mapped coverage report, matching CI.
+
 ## Guidelines
 
 - **Zero runtime dependencies** is a core promise. Dev dependencies are fine.
