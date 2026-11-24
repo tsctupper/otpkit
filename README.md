@@ -54,6 +54,8 @@ const manualKey = base32Encode(secret);
 
 ### Verify a code
 
+`verifyTotp` checks whether a code matches. For sign-in, also [consume the matched time step](#reject-replayed-codes).
+
 ```ts
 import { verifyTotp, base32Decode } from "@tsctupper/otpkit";
 
@@ -65,16 +67,47 @@ if (!ok) throw new Error("Invalid code");
 
 ### Reject replayed codes
 
-A valid code stays valid for its whole window, so an attacker who sees one can reuse it. `matchTotp` tells you _which_ time step matched, so you can refuse anything you have already accepted:
+[RFC 6238 §5.2](https://datatracker.ietf.org/doc/html/rfc6238#section-5.2) requires a verifier to accept a code only once.
+Use `matchTotp` to get the step, then let the database decide whether to accept it in a single conditional update.
 
-```ts
+This example uses a file-backed SQLite database (`db`, a `node:sqlite` `DatabaseSync` connection on Node.js 22.13+) in autocommit mode.
+At enrollment, create a `totp_factors` row with a unique `id`, the owning `account_id`, the encrypted secret,
+and a nullable `last_step INTEGER` column initialized to `NULL`. Confirmation records the first accepted step and activates
+the factor in the same write. Sign-in requires an already confirmed factor and a strictly newer step.
+
+```js
 import { matchTotp } from "@tsctupper/otpkit";
 
-const step = matchTotp(userSubmittedCode, secret);
-if (step === null || step <= user.lastTotpStep) throw new Error("Invalid code");
+const consumeStep = db.prepare(`
+  UPDATE totp_factors SET last_step = :step
+  WHERE id = :factor AND account_id = :account
+    AND ((:purpose = 'confirm' AND last_step IS NULL)
+      OR (:purpose = 'sign-in' AND last_step < :step))
+  RETURNING 1
+`);
 
-user.lastTotpStep = step; // persist per user (e.g. in your database)
+function consumeCode(factor, code, purpose) {
+  const step = matchTotp(code, factor.secret);
+  if (step === null) throw new Error("Invalid code");
+
+  const rows = consumeStep.all({
+    ":factor": factor.id,
+    ":account": factor.accountId,
+    ":step": step,
+    ":purpose": purpose,
+  });
+  if (rows.length !== 1) throw new Error("Invalid code");
+}
+
+// In the sign-in handler, after the first factor succeeds:
+consumeCode(factor, userSubmittedCode, "sign-in");
+await finishSignIn();
 ```
+
+Load the factor and decrypt its secret using the account from the authenticated enrollment session or sign-in
+challenge. Give a replacement secret a new factor ID and retire the old row. The enrollment handler calls
+`consumeCode(factor, code, "confirm")`; the user needs a later code for sign-in. A zero-row update or database
+error ends the attempt. If you use an explicit transaction, wait for its commit before issuing the session.
 
 ### Generate a code (client side, tests, or debugging)
 
