@@ -7,7 +7,7 @@ Thanks for your interest! otpkit is intentionally small — correctness and clar
 ```sh
 npm ci
 npm run check      # typecheck + lint + format check + tests
-npm run coverage   # the suite maintains 100% line/branch coverage
+npm run coverage   # report line and branch coverage
 ```
 
 ## Guidelines
