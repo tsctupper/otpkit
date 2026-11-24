@@ -13,7 +13,7 @@ export interface HotpOptions {
  * RFC 4226 HMAC-based One-Time Password.
  *
  * @param secret Raw shared-secret bytes (Base32-decode first if you hold text).
- * @param counter Moving factor; `number` or `bigint`, encoded 8-byte big-endian.
+ * @param counter Moving factor; safe integer `number` or `bigint`, encoded 8-byte big-endian.
  */
 export function hotp(secret: Uint8Array, counter: number | bigint, options: HotpOptions = {}): string {
   const digits = options.digits ?? 6;
@@ -24,6 +24,12 @@ export function hotp(secret: Uint8Array, counter: number | bigint, options: Hotp
     throw new RangeError("digits must be an integer between 6 and 8");
   }
   if (secret.length === 0) throw new RangeError("secret must not be empty");
+
+  // Converting an unsafe number to bigint cannot recover bits already rounded
+  // by JavaScript. Require bigint for the rest of the unsigned 64-bit range.
+  if (typeof counter === "number" && !Number.isSafeInteger(counter)) {
+    throw new RangeError("number counter must be a safe integer; use bigint for larger counters");
+  }
 
   // 8-byte big-endian counter — RFC 4226 §5.1.
   let c = BigInt(counter);

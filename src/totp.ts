@@ -21,7 +21,9 @@ function counterFor(options: TotpOptions): bigint {
   if (!Number.isFinite(nowMs)) throw new RangeError("now must be a finite Unix time in milliseconds");
   const seconds = Math.floor(nowMs / 1000) - epoch;
   if (seconds < 0) throw new RangeError("now is before the epoch (T0)");
-  return BigInt(Math.floor(seconds / period));
+  const step = Math.floor(seconds / period);
+  if (!Number.isSafeInteger(step)) throw new RangeError("computed time step must be a safe integer");
+  return BigInt(step);
 }
 
 /** RFC 6238 time-based OTP for the current (or supplied) moment. */
