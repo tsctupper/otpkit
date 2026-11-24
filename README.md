@@ -1,32 +1,40 @@
 # otpkit
 
-**Zero-dependency, RFC-verified HOTP & TOTP (2FA) for Node.js and TypeScript.**
-
-[![CI](https://github.com/tsctupper/otpkit/actions/workflows/ci.yml/badge.svg)](https://github.com/tsctupper/otpkit/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@tsctupper/otpkit)](https://www.npmjs.com/package/@tsctupper/otpkit)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
-![Node](https://img.shields.io/badge/node-%3E%3D18-blue)
-![Types](https://img.shields.io/badge/types-included-blue)
-
-The one-time-password codes behind Google Authenticator, Authy, and every "enter your 6-digit code" screen — implemented straight from the RFCs, with **no runtime dependencies** and a test suite that asserts **byte-for-byte compliance with the official specification test vectors**.
-
-- HOTP (RFC 4226) and TOTP (RFC 6238), SHA-1 / SHA-256 / SHA-512
-- Base32 (RFC 4648) secrets — the format authenticator apps use
-- `otpauth://` provisioning URIs for QR-code enrollment
-- Constant-time verification with a bounded clock-drift window, plus `matchTotp` for replay protection
-- Zero dependencies, ESM, first-class TypeScript types
-- Verified against the RFC 4226 / 6238 / 4648 test vectors in CI, with 100% line and branch coverage
+Generate and verify authenticator codes in Node.js. otpkit supports time-based codes
+(TOTP), counter-based codes (HOTP), and enrollment URIs. It ships as an ES module
+with TypeScript types and uses Node's built-in crypto with zero runtime dependencies.
 
 ## Install
+
+Requires Node.js 18 or newer.
 
 ```sh
 npm install @tsctupper/otpkit
 ```
 
-Node >= 18. Ships ESM + `.d.ts` types.
-
 ## Quick start
+
+### Reproduce a code from the standard
+
+What should an authenticator display 59 seconds after the Unix epoch?
+The first SHA-1 example in [RFC 6238, Appendix B](https://datatracker.ietf.org/doc/html/rfc6238#appendix-B)
+gives an eight-digit answer. Save this as `try-otp.mjs` alongside the installed
+package and run `node try-otp.mjs`.
+
+```js
+import { totp, verifyTotp } from "@tsctupper/otpkit";
+
+const secret = Buffer.from("12345678901234567890", "ascii"); // Public RFC test fixture
+const options = { now: 59_000, digits: 8 }; // Unix time in milliseconds
+const code = totp(secret, options);
+
+console.log(code); // 94287082
+console.log(verifyTotp(code, secret, options)); // true
+```
+
+For real accounts, generate a fresh secret at enrollment and use the current time
+for verification. To try that workflow with an authenticator app, follow the
+[local sign-in demo](./examples/two-factor/README.md).
 
 ### Enroll a user
 
@@ -78,83 +86,24 @@ totp(secret, { digits: 8, algorithm: "SHA256", period: 60 });
 hotp(secret, 42); // counter-based (RFC 4226)
 ```
 
-## Example: two-factor login with Express
+## Try the complete second-factor flow
 
-A complete enroll → confirm → verify flow, including replay protection and attempt throttling. `users` stands in for your database; encrypt the secret at rest in a real app.
+The [runnable local example](./examples/two-factor/README.md)
+uses the published npm package and a real authenticator app. It walks through
+enrollment, confirmation, a sign-in challenge, rejected codes, replay protection
+and attempt limits, with no server or database setup. From a checkout containing the example:
 
-```ts
-import express from "express";
-import { base32Decode, base32Encode, generateSecret, matchTotp, otpauthURL } from "@tsctupper/otpkit";
-
-interface UserRecord {
-  secret?: string; // Base32 secret, set once enrollment is confirmed
-  pendingSecret?: string; // generated but not yet confirmed by a valid code
-  lastStep: bigint; // highest TOTP step already accepted (replay protection)
-  failures: number;
-  lockedUntil: number; // ms since epoch
-}
-
-const users = new Map<string, UserRecord>();
-const MAX_FAILURES = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
-
-const app = express();
-app.use(express.json());
-
-// 1. Start enrollment: hand the user a QR code (render `uri`) and a manual key.
-app.post("/2fa/enroll", (req, res) => {
-  const { userId, email } = req.body as { userId: string; email: string };
-  const secret = generateSecret();
-  const record = users.get(userId) ?? { lastStep: -1n, failures: 0, lockedUntil: 0 };
-  record.pendingSecret = base32Encode(secret);
-  users.set(userId, record);
-  res.json({
-    uri: otpauthURL(secret, { label: email, issuer: "Acme" }),
-    manualKey: record.pendingSecret,
-  });
-});
-
-// 2. Check a submitted code against the user's secret, with throttling and replay protection.
-function checkCode(record: UserRecord, base32Secret: string, code: string): boolean {
-  if (Date.now() < record.lockedUntil) return false;
-  const step = matchTotp(code, base32Decode(base32Secret)); // ±1 step of drift
-  if (step === null || step <= record.lastStep) {
-    record.failures += 1;
-    if (record.failures >= MAX_FAILURES) {
-      record.lockedUntil = Date.now() + LOCKOUT_MS;
-      record.failures = 0;
-    }
-    return false;
-  }
-  record.lastStep = step; // a code can only be used once
-  record.failures = 0;
-  return true;
-}
-
-// 3. Confirm enrollment: only activate 2FA once the user proves their app works.
-app.post("/2fa/confirm", (req, res) => {
-  const { userId, code } = req.body as { userId: string; code: string };
-  const record = users.get(userId);
-  if (!record?.pendingSecret || !checkCode(record, record.pendingSecret, code)) {
-    res.status(401).json({ error: "Invalid code" });
-    return;
-  }
-  record.secret = record.pendingSecret;
-  record.pendingSecret = undefined;
-  res.json({ enabled: true });
-});
-
-// 4. Second factor at login.
-app.post("/2fa/verify", (req, res) => {
-  const { userId, code } = req.body as { userId: string; code: string };
-  const record = users.get(userId);
-  if (!record?.secret || !checkCode(record, record.secret, code)) {
-    res.status(401).json({ error: "Invalid code" });
-    return;
-  }
-  res.json({ ok: true });
-});
+```sh
+cd examples/two-factor
+npm ci
+npm start
 ```
+
+This demonstrates the second factor, not a complete login system. Its one demo
+account lives in memory. The example explains the production requirements for
+authenticated account identity, encrypted secret storage, atomic replay protection,
+shared rate limits and recovery. No account identifier supplied by a caller is
+used to authorize enrollment or verification.
 
 ## API
 
@@ -191,7 +140,7 @@ Run them yourself: `npm test`.
 - **`bigint` counters.** The RFC 4226 counter is 64 bits wide. JavaScript numbers lose precision past 2^53, so counters are `bigint` internally and anything above 2^64 − 1 is rejected rather than wrapped.
 - **`matchTotp` returns the step, not a boolean.** Replay protection needs to know _which_ step was accepted. Returning it keeps the library stateless while making the safe pattern the easy one. `verifyTotp` is a thin wrapper for when you don't need it.
 - **Bounded work on untrusted input.** Each step in the drift window costs one HMAC, so the window is capped at 100. Malformed tokens return `false` instead of throwing, so bad input can't be used to crash a login path.
-- **Scope.** It generates and verifies codes and builds the enrollment URI. It does not render QR codes, store secrets or rate-limit; those belong to your application, and the Express example above shows one way to do it.
+- **Scope.** It generates and verifies codes and builds the enrollment URI. It does not render QR codes, store secrets or rate-limit; those belong to your application, and the runnable example above demonstrates the application boundary.
 
 ## Security notes
 
@@ -206,7 +155,7 @@ Run them yourself: `npm test`.
 ```sh
 npm ci
 npm run check      # typecheck, lint, format check, tests
-npm run coverage   # line/branch coverage (held at 100%)
+npm run coverage   # report line and branch coverage
 npm run build      # emit dist/ (ESM + .d.ts)
 ```
 
