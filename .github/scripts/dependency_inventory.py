@@ -141,9 +141,23 @@ APPLE = set(
         "IOKit",
         "ServiceManagement",
         "Swift",
+        "Vision",
+        "ImageIO",
         "Testing",
     ]
 )
+# Explicit first-party SDK metadata, reviewed2026-11-24, not a Swift-name wildcard.
+# Public installed macOS27.2 and iPhoneSimulator27.2 framework module maps agree.
+APPLE_MODULE_PROVENANCE = {
+    "Vision": {
+        "sdk_versions": ["macOS27.2", "iPhoneSimulator27.2"],
+        "module_map_sha256": "227de61cd9b9fcd38be5a24459a36b336f78d0df228bc27710c4273021deb8c0",
+    },
+    "ImageIO": {
+        "sdk_versions": ["macOS27.2", "iPhoneSimulator27.2"],
+        "module_map_sha256": "f0010ce07755bb771d78797861745ea89c6ee245dadf2c81635a6d633bc0a6df",
+    },
+}
 SERVICES = {
     "github": "github.com|api.github.com|githubusercontent.com",
     "vercel": "vercel.com|vercel.app",
@@ -247,18 +261,24 @@ def source_candidate(path):
     )
 
 
-def js_module_references(source, *, include_operating=False):
+def js_module_references(source, *, include_operating=False, include_metadata=False):
     """Read module expressions, not text inside strings/comments/regex data.
 
     Small first-party lexical reader, not a complete JS/TS semantic parser. Dynamic
     module arguments and malformed lexical spans remain explicit coverage gaps.
     """
     tokens = []
+    token_newlines = []
+    comment_spans = []
+    pending_newline = False
     issues = []
     length = len(source)
 
     def emit(kind, value):
+        nonlocal pending_newline
+        token_newlines.append(pending_newline)
         tokens.append((kind, value))
+        pending_newline = False
 
     def quoted(index, quote):
         parts = []
@@ -299,18 +319,31 @@ def js_module_references(source, *, include_operating=False):
         return "".join(parts), index
 
     def code(index, interpolation=False, depth=0):
+        nonlocal pending_newline
         if depth > 64:
             issues.append("JavaScript lexical nesting exceeds bound")
             return length
         braces = 0
         parens = []
+        jsx_tag_bases = []
         while index < length:
             char = source[index]
             if char.isspace():
+                pending_newline = pending_newline or char in "\r\n"
                 index += 1
                 continue
             if source.startswith("//", index):
                 end = source.find("\n", index + 2)
+                line_start = source.rfind("\n", 0, index) + 1
+                standalone = not source[line_start:index].strip()
+                comment_spans.append(
+                    (
+                        line_start if standalone else index,
+                        (end + 1 if standalone else end) if end >= 0 else length,
+                        "",
+                    )
+                )
+                pending_newline = pending_newline or end >= 0
                 index = length if end < 0 else end + 1
                 continue
             if source.startswith("/*", index):
@@ -318,6 +351,20 @@ def js_module_references(source, *, include_operating=False):
                 if end < 0:
                     issues.append("Unterminated JavaScript comment")
                     return length
+                comment_spans.append(
+                    (
+                        index,
+                        end + 2,
+                        "\n" * source[index : end + 2].count("\n")
+                        if "\n" in source[index : end + 2]
+                        else " ",
+                    )
+                )
+                pending_newline = (
+                    pending_newline
+                    or "\n" in source[index : end + 2]
+                    or "\r" in source[index : end + 2]
+                )
                 index = end + 2
                 continue
             if char in "\"'":
@@ -375,18 +422,106 @@ def js_module_references(source, *, include_operating=False):
             previous = tokens[-1] if tokens else None
             regex_allowed = (
                 previous is None
-                or previous[1] in {"(", "[", "{", "=", ":", ",", ";", "!", "?", ")control"}
+                or previous[1]
+                in {
+                    "(",
+                    "[",
+                    "{",
+                    "=",
+                    ":",
+                    ",",
+                    ";",
+                    "!",
+                    "?",
+                    ")control",
+                    "=>",
+                    "+",
+                    "-",
+                    "*",
+                    "/",
+                    "%",
+                    "**",
+                    "&&",
+                    "||",
+                    "??",
+                    "&",
+                    "|",
+                    "^",
+                    "~",
+                    "+=",
+                    "-=",
+                    "*=",
+                    "/=",
+                    "%=",
+                    "&&=",
+                    "||=",
+                    "??=",
+                    "==",
+                    "!=",
+                    "===",
+                    "!==",
+                    "<",
+                    ">",
+                    "<=",
+                    ">=",
+                }
                 or (
                     previous[0] == "identifier"
                     and previous[1]
-                    in {"return", "throw", "case", "yield", "await", "void", "typeof", "delete"}
+                    in {
+                        "return",
+                        "throw",
+                        "case",
+                        "yield",
+                        "await",
+                        "void",
+                        "typeof",
+                        "delete",
+                        "of",
+                        "in",
+                        "instanceof",
+                        "new",
+                    }
                 )
             )
-            if char == "/" and previous and previous[1] == "}":
+            if (
+                char == "<"
+                and index + 1 < length
+                and (source[index + 1].isalpha() or source[index + 1] == "_")
+                and (
+                    previous is None
+                    or previous[1]
+                    in {
+                        "=",
+                        "(",
+                        "{",
+                        ":",
+                        ",",
+                        "?",
+                        "&",
+                        "&&",
+                        "||",
+                        "??",
+                        "=>",
+                        ">",
+                        "}",
+                        "return",
+                    }
+                )
+            ):
+                jsx_tag_bases.append(braces)
+            jsx_self_close = (
+                char == "/"
+                and source.startswith("/>", index)
+                and bool(jsx_tag_bases)
+                and braces == jsx_tag_bases[-1]
+            )
+            if char == "/" and previous and previous[1] == "}" and not jsx_self_close:
                 issues.append(
                     "Ambiguous JavaScript slash after closing brace requires owner syntax review"
                 )
-            if char == "/" and regex_allowed:
+            if char == "/" and regex_allowed and not jsx_self_close:
+                regex_start = index
                 index += 1
                 in_class = False
                 closed = False
@@ -409,7 +544,7 @@ def js_module_references(source, *, include_operating=False):
                     index += 1
                 if not closed:
                     issues.append("Unparsed JavaScript regex span")
-                emit("regex", "")
+                emit("regex", source[regex_start:index])
                 continue
             if char.isalpha() or char in "_$":
                 end = index + 1
@@ -417,6 +552,54 @@ def js_module_references(source, *, include_operating=False):
                     end += 1
                 emit("identifier", source[index:end])
                 index = end
+                continue
+            if char == ">" and bool(jsx_tag_bases) and braces == jsx_tag_bases[-1]:
+                jsx_tag_bases.pop()
+            operator = next(
+                (
+                    op
+                    for op in (
+                        ">>>=",
+                        "**=",
+                        "===",
+                        "!==",
+                        "<<=",
+                        ">>=",
+                        "&&=",
+                        "||=",
+                        "??=",
+                        ">>>",
+                        "=>",
+                        "++",
+                        "--",
+                        "&&",
+                        "||",
+                        "??",
+                        "==",
+                        "!=",
+                        "<=",
+                        ">=",
+                        "+=",
+                        "-=",
+                        "*=",
+                        "/=",
+                        "%=",
+                        "&=",
+                        "|=",
+                        "^=",
+                        "<<",
+                        ">>",
+                        "**",
+                        "?.",
+                        "...",
+                    )
+                    if source.startswith(op, index)
+                ),
+                None,
+            )
+            if operator:
+                emit("punct", operator)
+                index += len(operator)
                 continue
             if char == "(":
                 parens.append(
@@ -457,11 +640,18 @@ def js_module_references(source, *, include_operating=False):
             tools.append(tokens[index + 2][1])
         if kind != "identifier" or value not in {"import", "export", "require"}:
             continue
-        if index and tokens[index - 1][1] == ".":
+        if index and tokens[index - 1][1] in {".", "?."}:
             continue
         following = tokens[index + 1 :]
         if not following:
             continue
+        if (
+            value == "require"
+            and len(following) > 1
+            and following[0][1] == "?."
+            and following[1][1] == "("
+        ):
+            following = following[1:]
         if value == "require" and following[0][1] == "(":
             nesting = 0
             method = False
@@ -497,6 +687,24 @@ def js_module_references(source, *, include_operating=False):
                 ):
                     refs.append(following[offset + 1][1])
                     break
+    comment_elided = source
+    for start, end, replacement in sorted(comment_spans, reverse=True):
+        comment_elided = comment_elided[:start] + replacement + comment_elided[end:]
+    metadata = {
+        "comment_elided_raw_sha256": digest(comment_elided.strip("\r\n").encode()),
+        "complete_lexical_code_sha256": digest(
+            json.dumps(
+                list(zip(tokens, token_newlines, strict=True)), separators=(",", ":")
+            ).encode()
+        ),
+        "scope": (
+            "Full-file tokens of the bounded reader, raw regex and "
+            "token-boundary newlines. Only whitespace/comments normalized; "
+            "no inferred loader or environment closure."
+        ),
+    }
+    if include_metadata:
+        return refs, sorted(set(issues)), tools, metadata
     return (refs, sorted(set(issues)), tools) if include_operating else (refs, sorted(set(issues)))
 
 
@@ -550,6 +758,164 @@ def parse_hashed_requirements(value):
     }
 
 
+def yaml_run_scripts(value):
+    """Read literal GitHub-style run scalars/blocks; no YAML execution."""
+    lines = value.splitlines()
+    scripts = []
+    issues = []
+    for line in lines:
+        selection = re.match(r"^\s*(?:-\s*)?shell:\s*(.+?)\s*$", line)
+        if selection and selection[1].strip("\"'").split(" ")[0] not in {"bash", "sh"}:
+            issues.append(
+                "Workflow interpreter other than literal bash/sh requires owner closure review"
+            )
+    i = 0
+    while i < len(lines):
+        match = re.match(r"^( *)(?:-\s*)?run:\s*(.*?)\s*$", lines[i])
+        if not match:
+            i += 1
+            continue
+        indent = len(match[1])
+        scalar = match[2]
+        i += 1
+        if scalar in {"|", "|-", "|+", ">", ">-", ">+"}:
+            block = []
+            while i < len(lines) and (
+                not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip(" ")) > indent
+            ):
+                block.append(lines[i])
+                i += 1
+            nonempty = [len(line) - len(line.lstrip(" ")) for line in block if line.strip()]
+            width = min(nonempty) if nonempty else indent + 1
+            scripts.append("\n".join(line[width:] for line in block))
+        elif scalar.startswith(("*", "&")) or not scalar:
+            issues.append("Nonliteral workflow run script requires owner review")
+        else:
+            if scalar.startswith(('"', "'")):
+                try:
+                    scalar = ast.literal_eval(scalar)
+                except (ValueError, SyntaxError):
+                    issues.append("Quoted workflow run scalar requires owner review")
+                    continue
+                if not isinstance(scalar, str):
+                    issues.append("Nontext workflow run scalar")
+                    continue
+            scripts.append(scalar)
+    return scripts, issues
+
+
+def embedded_python_operating_calls(content, local_python):
+    tools = []
+    issues = []
+    try:
+        tree = ast.parse(content)
+    except (ValueError, SyntaxError):
+        return [], ["Embedded Python source unreadable to parser"]
+    modules = {}
+    runners = {}
+    runner_names = {"run", "Popen", "check_output", "check_call", "call"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                root = item.name.split(".")[0]
+                if root not in sys.stdlib_module_names and root not in local_python:
+                    issues.append(
+                        "Embedded Python external import closure requires review: " + root
+                    )
+                if item.name == "subprocess":
+                    modules[item.asname or "subprocess"] = "subprocess"
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            root = node.module.split(".")[0]
+            if root not in sys.stdlib_module_names and root not in local_python:
+                issues.append("Embedded Python external import closure requires review: " + root)
+            if node.module == "subprocess":
+                for item in node.names:
+                    if item.name in runner_names:
+                        runners[item.asname or item.name] = item.name
+                    elif item.name == "*":
+                        issues.append("Embedded Python wildcard subprocess import requires review")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        runner = (isinstance(node.func, ast.Name) and node.func.id in runners) or (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in modules
+            and node.func.attr in runner_names
+        )
+        if not runner:
+            continue
+        argument = (
+            node.args[0]
+            if node.args
+            else next((kw.value for kw in node.keywords if kw.arg == "args"), None)
+        )
+        if (
+            isinstance(argument, (ast.List, ast.Tuple))
+            and argument.elts
+            and isinstance(argument.elts[0], ast.Constant)
+            and isinstance(argument.elts[0].value, str)
+        ):
+            tools.append(argument.elts[0].value)
+        else:
+            issues.append("Embedded Python subprocess string/dynamic command requires owner review")
+    return tools, issues
+
+
+def shell_operating_calls(value, *, local_python=(), depth=0):
+    """Bounded literal commands; inspect executable heredocs, exclude inert data."""
+    if depth > 4:
+        return [], ["Embedded shell depth exceeds review bound"]
+    lines = value.splitlines()
+    shell = []
+    i = 0
+    issues = []
+    embedded_tools = []
+    while i < len(lines):
+        line = lines[i]
+        shell.append(line)
+        i += 1
+        heredocs = list(re.finditer(r"<<(-)?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2", line))
+        if "<<" in line and not heredocs:
+            issues.append("Unparsed heredoc delimiter requires owner closure review")
+        for here in heredocs:
+            found = False
+            body = []
+            while i < len(lines):
+                candidate = lines[i].lstrip("\t") if here[1] else lines[i]
+                i += 1
+                if candidate == here[3]:
+                    found = True
+                    break
+                body.append(candidate)
+            if not found:
+                issues.append("Unterminated shell heredoc requires owner review")
+                continue
+            content = "\n".join(body)
+            if not here[2] and any(char in content for char in "$`"):
+                issues.append("Unquoted heredoc shell expansion requires owner closure review")
+            if re.match(r"^\s*python(?:3(?:\.[0-9]+)?)?\s", line):
+                tools, nested = embedded_python_operating_calls(content, local_python)
+                embedded_tools.extend(tools)
+                issues.extend(nested)
+            elif re.match(r"^\s*(?:bash|sh)\s", line):
+                tools, nested = shell_operating_calls(
+                    content, local_python=local_python, depth=depth + 1
+                )
+                embedded_tools.extend(tools)
+                issues.extend(nested)
+            else:
+                issues.append(
+                    "Unclassified or generated heredoc content requires owner provenance review"
+                )
+    source = "\n".join(shell)
+    tools = re.findall(
+        r"(?:^|[\n;&|])\s*(git|gh|vercel|restic|psql|pg_dump|pg_restore|docker|npm|npx|pip|pip3)\s",
+        source,
+    )
+    return tools + embedded_tools, issues
+
+
 def inspect_files(
     files,
     *,
@@ -564,6 +930,9 @@ def inspect_files(
     unknown = []
     sources = []
     requirements_sets = {}
+    critical_gaps = []
+    sdk_modules = []
+    javascript_code_fingerprints = {}
 
     def add(category, ecosystem, name, version, path, kind):
         # Installation/declaration/use-site counts are separate from unique package count.
@@ -637,14 +1006,20 @@ def inspect_files(
             {"path": path, "reason": reason, "owner": owner, "coverage_kind": coverage_kind}
         )
 
-    def text(path, raw):
+    def text(path, raw, required=False):
         if raw is None:
+            if required:
+                critical_gaps.append({"path": path, "reason": "Required dependency input unread"})
             gap(path, "tracked source unread, oversized or unsupported blob")
             return None
         sources.append({"path": path, "sha256": digest(raw), "bytes": len(raw)})
         try:
             return raw.decode("utf-8")
         except UnicodeDecodeError:
+            if required:
+                critical_gaps.append(
+                    {"path": path, "reason": "Required dependency input is not UTF-8 text"}
+                )
             gap(path, "binary dependency/provenance requires owner review")
             return None
 
@@ -705,7 +1080,7 @@ def inspect_files(
         interesting = source_candidate(path)
         if not interesting:
             continue
-        value = text(path, raw)
+        value = text(path, raw, required=is_manifest)
         if value is None:
             continue
         if is_manifest:
@@ -890,6 +1265,10 @@ def inspect_files(
                     ),
                 )
         except (ValueError, TypeError, AttributeError):
+            if name in {"package.json", "package-lock.json", "npm-shrinkwrap.json"}:
+                critical_gaps.append(
+                    {"path": path, "reason": "Required npm input malformed or unsupported shape"}
+                )
             gap(path, "manifest malformed or unsupported fields; not zero")
         if suffix == ".py":
             try:
@@ -926,13 +1305,20 @@ def inspect_files(
             except (SyntaxError, ValueError):
                 gap(path, "Python source import analysis unavailable")
         if suffix in {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"}:
-            module_refs, lexical_issues, operating_calls = js_module_references(
-                value, include_operating=True
+            module_refs, lexical_issues, operating_calls, metadata = js_module_references(
+                value, include_operating=True, include_metadata=True
             )
+            javascript_code_fingerprints[path] = metadata
             for tool in operating_calls:
                 operating(tool, path)
             for issue in lexical_issues:
-                gap(path, issue)
+                gap(
+                    path,
+                    issue,
+                    "dynamic_js_module"
+                    if issue.startswith("Dynamic JavaScript module argument")
+                    else "unparsed",
+                )
             for specifier in module_refs:
                 if specifier.startswith((".", "/", "@/", "~/", "#", "node:")):
                     continue
@@ -986,16 +1372,33 @@ def inspect_files(
                             pathlib.PurePosixPath(scope) / "package.json"
                         )
         if suffix in {".sh", ".yml", ".yaml"}:
-            for tool in re.findall(
-                (
-                    "(?:^|[\\n;&|])\\s*(?:-\\s*run:\\s*)?(git|gh|vercel|restic|p"
-                    "sql|pg_dump|pg_restore|docker|npm|npx|pip|pip3)\\s"
-                ),
-                value,
-            ):
-                operating(tool, path)
+            scripts, run_issues = (
+                yaml_run_scripts(value) if suffix in {".yml", ".yaml"} else ([value], [])
+            )
+            for issue in run_issues:
+                gap(path, issue)
+            for script in scripts:
+                tools, shell_issues = shell_operating_calls(script, local_python=local_py)
+                for tool in tools:
+                    operating(tool, path)
+                for issue in shell_issues:
+                    gap(path, issue)
         if suffix == ".swift":
             for module in re.findall(r"^\s*(?:@testable\s+)?import\s+(\w+)", value, re.M):
+                if module in APPLE_MODULE_PROVENANCE:
+                    sdk_modules.append(
+                        {
+                            "module": module,
+                            "path": path,
+                            "evidence": APPLE_MODULE_PROVENANCE[module],
+                            "scope": (
+                                "Explicit first-party platform SDK primitive; "
+                                "source import classification, "
+                                "not physical third-party removal or availability "
+                                "proof on another host"
+                            ),
+                        }
+                    )
                 if module not in APPLE:
                     add("native", "swift_import", module, "unresolved", path, "source_import")
         if suffix in {".pbxproj", ".xcproj"}:
@@ -1096,6 +1499,9 @@ def inspect_files(
             }:
                 data = json.loads(raw)
                 if not isinstance(data, dict):
+                    critical_gaps.append(
+                        {"path": path, "reason": "Required npm JSON root must be an object"}
+                    )
                     gap(path, "JSON dependency manifest/lock root must be an object")
                     continue
                 if pathlib.PurePosixPath(path).name == "package.json":
@@ -1104,6 +1510,9 @@ def inspect_files(
                     if not isinstance(data.get("packages", {}), dict) or any(
                         not isinstance(v, dict) for v in data.get("packages", {}).values()
                     ):
+                        critical_gaps.append(
+                            {"path": path, "reason": "Required npm lock packages records malformed"}
+                        )
                         gap(path, "npm lock packages must be an object of package records")
                         continue
                     locks[str(pathlib.PurePosixPath(path).parent)] = (path, data)
@@ -1170,8 +1579,29 @@ def inspect_files(
         else:
             lock_path, lock = lock_info
             packages = lock.get("packages")
+            root = packages.get("") if isinstance(packages, dict) else None
+            root_valid = isinstance(root, dict) and all(
+                root.get(group, {}) == data.get(group, {})
+                for group in [
+                    "dependencies",
+                    "devDependencies",
+                    "optionalDependencies",
+                    "peerDependencies",
+                ]
+            )
+            if not root_valid:
+                critical_gaps.append(
+                    {
+                        "path": lock_path,
+                        "reason": (
+                            "npm lock root metadata missing or declaration groups "
+                            "differ from manifest"
+                        ),
+                    }
+                )
             if (
-                lock.get("lockfileVersion") not in [2, 3]
+                not root_valid
+                or lock.get("lockfileVersion") not in [2, 3]
                 or not isinstance(packages, dict)
                 or data.get("workspaces")
                 or any(
@@ -1285,6 +1715,9 @@ def inspect_files(
         "category_counts": counts,
         "npm_units": npm_units,
         "requirements_sets": requirements_sets,
+        "critical_input_gaps": critical_gaps,
+        "explicit_first_party_sdk_modules": sdk_modules,
+        "javascript_code_fingerprints": javascript_code_fingerprints,
         "first_party_provenance": verified_first_party,
         "known_dependency_reference_sites": known,
         "known_code_dependency_sites": known - counts["operating_tools"],
@@ -1511,6 +1944,21 @@ def compare(baseline, current):
         and old_hash.get(g["path"]) != new_hash.get(g["path"])
         and g.get("coverage_kind") != "npm_resolution_unmeasured"
         and not (
+            g.get("coverage_kind") == "dynamic_js_module"
+            and baseline.get("javascript_code_fingerprints", {})
+            .get(g["path"], {})
+            .get("complete_lexical_code_sha256")
+            and baseline["javascript_code_fingerprints"][g["path"]].get("comment_elided_raw_sha256")
+            and baseline["javascript_code_fingerprints"][g["path"]]["comment_elided_raw_sha256"]
+            == current.get("javascript_code_fingerprints", {})
+            .get(g["path"], {})
+            .get("comment_elided_raw_sha256")
+            and baseline["javascript_code_fingerprints"][g["path"]]["complete_lexical_code_sha256"]
+            == current.get("javascript_code_fingerprints", {})
+            .get(g["path"], {})
+            .get("complete_lexical_code_sha256")
+        )
+        and not (
             g.get("coverage_kind") == "python_environment_unmeasured"
             and g["path"] in requirements_removal_only
         )
@@ -1519,9 +1967,15 @@ def compare(baseline, current):
         baseline.get("id") != current.get("id")
         or not current.get("source_listing_complete")
         or not baseline.get("source_listing_complete")
+        or baseline.get("critical_input_gaps")
+        or current.get("critical_input_gaps")
     )
     return {
         "repository": current.get("id"),
+        "critical_input_gaps": {
+            "baseline": baseline.get("critical_input_gaps", []),
+            "candidate": current.get("critical_input_gaps", []),
+        },
         "baseline_sha": baseline.get("source_sha"),
         "current_sha": current.get("source_sha"),
         "state": "unknown"
@@ -1603,7 +2057,9 @@ def main():
         code = result["exit_code"]
     else:
         result = current
-        code = 3 if not current["source_listing_complete"] else 0
+        code = (
+            3 if not current["source_listing_complete"] or current.get("critical_input_gaps") else 0
+        )
     raw = json.dumps(result, indent=2) + "\n"
     if a.out:
         a.out.write_text(raw)
