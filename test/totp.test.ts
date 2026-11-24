@@ -25,6 +25,12 @@ test("totp validates period and clock inputs", () => {
   assert.throws(() => totp(SECRET, { now: 5_000, epoch: 100 }), RangeError);
 });
 
+test("generation and verification reject a computed time step beyond safe integer precision", () => {
+  const options = { now: 1_000, period: 2 ** -53 };
+  assert.throws(() => totp(SECRET, options), RangeError);
+  assert.throws(() => matchTotp("000000", SECRET, options), RangeError);
+});
+
 test("verifyTotp accepts the live step and rejects one outside the window", () => {
   assert.equal(verifyTotp("94287082", SECRET, { digits: 8, now: T }), true);
   assert.equal(verifyTotp("94287082", SECRET, { digits: 8, now: T + 60_000 }), false);

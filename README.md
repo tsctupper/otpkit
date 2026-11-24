@@ -119,7 +119,7 @@ used to authorize enrollment or verification.
 
 `secret` is always **raw bytes** (`Uint8Array`) — decode Base32 text first. Options: `digits` (6–8, default 6), `algorithm` (`"SHA1"` default), `period` (30s), `window`, `now`, `epoch`. Full types are bundled.
 
-Invalid configuration (out-of-range digits, non-positive period, a `window` outside 0–100, an empty secret or label) throws a `RangeError`; a malformed or wrong token never throws — `verifyTotp` just returns `false`.
+Invalid configuration (out-of-range digits, non-positive period, a computed time step outside the safe integer range, a `window` outside 0–100, an empty secret or label) throws a `RangeError`; a malformed or wrong token never throws — `verifyTotp` just returns `false`.
 
 ## Standards & verification
 

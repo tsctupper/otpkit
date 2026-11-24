@@ -18,6 +18,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   using a rounded value. Use `bigint` for counters above `Number.MAX_SAFE_INTEGER`;
   the full unsigned 64-bit range remains supported. Fractional and non-finite
   numeric counters also produce an explicit `RangeError`.
+- TOTP generation and verification reject a computed time step outside the safe
+  integer range before converting it to `bigint`.
 
 ## [1.1.3] — 2026-11-03
 
