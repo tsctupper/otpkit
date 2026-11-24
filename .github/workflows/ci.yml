@@ -82,11 +82,17 @@ jobs:
           fi
           python3 -I -B "$policy/compare_dependencies.py" "$GITHUB_REPOSITORY" "$BASE_SHA" "$GITHUB_SHA"
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-      - run: npm ci
+      - name: Select the verified Node.js runtime
+        run: python3 -I -B .github/scripts/select_node.py "${{ matrix.node }}"
+      - name: Install locked dependencies
+        env:
+          NODE_MAJOR: ${{ matrix.node }}
+        run: |
+          test "$(command -v node)" = "$OTP_NODE_BIN/node"
+          test "$(command -v npm)" = "$OTP_NODE_BIN/npm"
+          node -e 'const p = process; console.log(p.execPath, p.version, p.platform, p.arch); if (p.versions.node.split(".")[0] !== p.env.NODE_MAJOR || p.platform !== "linux" || p.arch !== "x64") p.exit(1)'
+          npm --version
+          npm ci --loglevel=http
       - name: Run compatibility tests
         if: matrix.node != 22
         run: npm test
@@ -102,7 +108,7 @@ jobs:
       - run: npm run build
       - name: Test the runnable example against the published package
         run: |
-          npm ci --prefix examples/two-factor --ignore-scripts
+          npm ci --prefix examples/two-factor --ignore-scripts --loglevel=http
           npm test --prefix examples/two-factor
       - name: Install and import the packed library
         if: matrix.node == 22
