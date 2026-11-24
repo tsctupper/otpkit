@@ -11,6 +11,11 @@ permissions:
   contents: read
   security-events: write
 
+# PR updates share a group. Each main or scheduled run has its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
