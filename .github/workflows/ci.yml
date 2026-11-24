@@ -22,7 +22,13 @@ jobs:
         node: [18, 20, 22, 24]
     name: node ${{ matrix.node }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out the event commit
+        run: |
+          git init --quiet
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout --quiet --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Check for dependency additions
         if: matrix.node == 22
         env:
