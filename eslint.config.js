@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { builtinRules } from "eslint/use-at-your-own-risk";
 import tseslint from "typescript-eslint";
 import noNamespace from "./scripts/lint/no-namespace.mjs";
+import preferNamespaceKeyword from "./scripts/lint/prefer-namespace-keyword.mjs";
 
 // ESLint exposes its built-in rule registry without a stability guarantee.
 const recommendedNames = [...builtinRules]
@@ -15,7 +16,7 @@ if (ruleSetDigest !== "26d2e4c3de39d0c32819430300649c594c42c7fdbf3ca0f7ab8723e7b
   );
 }
 
-// Keep the existing rule ID so inline suppressions and CLI overrides still apply.
+// Keep the existing rule IDs so inline suppressions and CLI overrides still apply.
 const strictConfig = tseslint.configs.strictTypeChecked.map((config) => {
   const plugin = config.plugins?.["@typescript-eslint"];
   if (!plugin) return config;
@@ -23,7 +24,14 @@ const strictConfig = tseslint.configs.strictTypeChecked.map((config) => {
     ...config,
     plugins: {
       ...config.plugins,
-      "@typescript-eslint": { ...plugin, rules: { ...plugin.rules, "no-namespace": noNamespace } },
+      "@typescript-eslint": {
+        ...plugin,
+        rules: {
+          ...plugin.rules,
+          "no-namespace": noNamespace,
+          "prefer-namespace-keyword": preferNamespaceKeyword,
+        },
+      },
     },
   };
 });
@@ -48,6 +56,8 @@ export default tseslint.config(
       "scripts/test.mjs",
       "scripts/lint/no-namespace.mjs",
       "scripts/lint/no-namespace.test.mjs",
+      "scripts/lint/prefer-namespace-keyword.mjs",
+      "scripts/lint/prefer-namespace-keyword.test.mjs",
     ],
     ...tseslint.configs.disableTypeChecked,
   },
