@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from urllib.parse import urlsplit
 
 CATEGORIES = [
     "runtime_direct",
@@ -110,6 +111,24 @@ NODE_CORE = set(
         "zlib",
         "sqlite",
     ]
+)
+# Bare names are exact SDK modules, not arbitrary package-prefix exemptions.
+NODE_CORE.difference_update({"test", "sqlite"})
+NODE_CORE.update(
+    {
+        "assert/strict",
+        "dns/promises",
+        "fs/promises",
+        "inspector/promises",
+        "path/posix",
+        "path/win32",
+        "readline/promises",
+        "stream/consumers",
+        "stream/promises",
+        "stream/web",
+        "timers/promises",
+        "util/types",
+    }
 )
 APPLE = set(
     [
@@ -326,6 +345,7 @@ def js_module_references(source, *, include_operating=False, include_metadata=Fa
         braces = 0
         parens = []
         jsx_tag_bases = []
+        jsx_elements = []
         while index < length:
             char = source[index]
             if char.isspace():
@@ -422,51 +442,55 @@ def js_module_references(source, *, include_operating=False, include_metadata=Fa
             previous = tokens[-1] if tokens else None
             regex_allowed = (
                 previous is None
-                or previous[1]
-                in {
-                    "(",
-                    "[",
-                    "{",
-                    "=",
-                    ":",
-                    ",",
-                    ";",
-                    "!",
-                    "?",
-                    ")control",
-                    "=>",
-                    "+",
-                    "-",
-                    "*",
-                    "/",
-                    "%",
-                    "**",
-                    "&&",
-                    "||",
-                    "??",
-                    "&",
-                    "|",
-                    "^",
-                    "~",
-                    "+=",
-                    "-=",
-                    "*=",
-                    "/=",
-                    "%=",
-                    "&&=",
-                    "||=",
-                    "??=",
-                    "==",
-                    "!=",
-                    "===",
-                    "!==",
-                    "<",
-                    ">",
-                    "<=",
-                    ">=",
-                }
+                or (
+                    previous[0] == "punct"
+                    and previous[1]
+                    in {
+                        "(",
+                        "[",
+                        "{",
+                        "=",
+                        ":",
+                        ",",
+                        ";",
+                        "!",
+                        "?",
+                        ")control",
+                        "=>",
+                        "+",
+                        "-",
+                        "*",
+                        "/",
+                        "%",
+                        "**",
+                        "&&",
+                        "||",
+                        "??",
+                        "&",
+                        "|",
+                        "^",
+                        "~",
+                        "+=",
+                        "-=",
+                        "*=",
+                        "/=",
+                        "%=",
+                        "&&=",
+                        "||=",
+                        "??=",
+                        "==",
+                        "!=",
+                        "===",
+                        "!==",
+                        "<",
+                        ">",
+                        "<=",
+                        ">=",
+                    }
+                )
                 or (
                     previous[0] == "identifier"
+                    and not (len(tokens) > 1 and tokens[-2] in {("punct", "."), ("punct", "?.")})
                     and previous[1]
                     in {
                         "return",
@@ -477,7 +501,6 @@ def js_module_references(source, *, include_operating=False, include_metadata=Fa
                         "void",
                         "typeof",
                         "delete",
-                        "of",
                         "in",
                         "instanceof",
                         "new",
@@ -487,7 +510,7 @@ def js_module_references(source, *, include_operating=False, include_metadata=Fa
             if (
                 char == "<"
                 and index + 1 < length
-                and (source[index + 1].isalpha() or source[index + 1] == "_")
+                and (source[index + 1].isalpha() or source[index + 1] in "_>")
                 and (
                     previous is None
                     or previous[1]
@@ -510,17 +533,41 @@ def js_module_references(source, *, include_operating=False, include_metadata=Fa
                 )
             ):
                 jsx_tag_bases.append(braces)
+                opening = re.match(r"<([A-Za-z_$][A-Za-z0-9_$:.-]*|)(?=[\s/>])", source[index:])
+                if opening:
+                    jsx_elements.append((opening.group(1), braces))
             jsx_self_close = (
                 char == "/"
                 and source.startswith("/>", index)
                 and bool(jsx_tag_bases)
                 and braces == jsx_tag_bases[-1]
             )
-            if char == "/" and previous and previous[1] == "}" and not jsx_self_close:
+            if char == "/" and previous == ("punct", "}") and not jsx_self_close:
                 issues.append(
                     "Ambiguous JavaScript slash after closing brace requires owner syntax review"
                 )
-            if char == "/" and regex_allowed and not jsx_self_close:
+            closing = (
+                re.match(r"/([A-Za-z_$][A-Za-z0-9_$:.-]*|)\s*>", source[index:])
+                if char == "/" and previous == ("punct", "<")
+                else None
+            )
+            jsx_closing_tag = bool(closing)
+            if closing:
+                if jsx_elements and jsx_elements[-1] == (closing.group(1), braces):
+                    jsx_elements.pop()
+                else:
+                    issues.append("Ambiguous JSX closing tag versus regex requires owner review")
+            if jsx_self_close and jsx_elements:
+                jsx_elements.pop()
+            if (
+                char == "/"
+                and regex_allowed
+                and previous
+                and previous[0] == "identifier"
+                and previous[1] in {"await", "yield"}
+            ):
+                issues.append("Contextual keyword versus regex operand requires owner review")
+            if char == "/" and regex_allowed and not jsx_self_close and not jsx_closing_tag:
                 regex_start = index
                 index += 1
                 in_class = False
@@ -605,6 +652,10 @@ def js_module_references(source, *, include_operating=False, include_metadata=Fa
                 parens.append(
                     bool(
                         previous
+                        and previous[0] == "identifier"
+                        and not (
+                            len(tokens) > 1 and tokens[-2] in {("punct", "."), ("punct", "?.")}
+                        )
                         and previous[1] in {"if", "while", "for", "switch", "catch", "with"}
                     )
                 )
@@ -916,6 +967,196 @@ def shell_operating_calls(value, *, local_python=(), depth=0):
     return tools + embedded_tools, issues
 
 
+DEPENDENCY_GROUPS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+
+
+def tool_configuration_role(path, manifests, identities, files):
+    """Existing lint command plus closed package boundary, not filename alone."""
+    file = pathlib.PurePosixPath(path)
+    parent = str(file.parent)
+    if (
+        file.name not in {"eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"}
+        or parent not in manifests
+    ):
+        return None
+    manifest, data = manifests[parent]
+    scripts = data.get("scripts", {})
+    included = data.get("files")
+    if not isinstance(scripts, dict) or not any(
+        isinstance(cmd, str) and re.match(r"^\s*eslint(?:\s|$)", cmd) for cmd in scripts.values()
+    ):
+        return None
+    if (
+        not isinstance(included, list)
+        or not included
+        or any(
+            not isinstance(x, str) or not x or any(c in x for c in "*?![") or x.strip("./") == ""
+            for x in included
+        )
+    ):
+        return None
+
+    def covers(value):
+        value = value.removeprefix("./").rstrip("/")
+        return (
+            value in {"", file.name}
+            or file.name.startswith(value + "/")
+            or any(c in value for c in "*?![")
+        )
+
+    def strings(value):
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, dict):
+            return [x for v in value.values() for x in strings(v)]
+        if isinstance(value, list):
+            return [x for v in value for x in strings(v)]
+        return []
+
+    if any(covers(x) for x in included) or any(
+        covers(x)
+        for key in ["main", "module", "types", "typings", "bin", "exports"]
+        for x in strings(data.get(key))
+    ):
+        return None
+    # A preexisting runtime edge to this file defeats a tooling-only role.
+    for other, raw in files.items():
+        if other == path or not other.endswith((".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")):
+            continue
+        try:
+            references, _issues = js_module_references(raw.decode("utf-8"))
+        except (UnicodeError, AttributeError):
+            return None
+        for reference in references:
+            if not reference.startswith("."):
+                continue
+            parts = []
+            for part in (pathlib.PurePosixPath(other).parent / reference).parts:
+                if part == ".." and parts:
+                    parts.pop()
+                elif part not in {".", ""}:
+                    parts.append(part)
+            resolved = "/".join(parts)
+            if resolved == path or any(
+                resolved + extension == path for extension in [".js", ".mjs", ".cjs"]
+            ):
+                return None
+    locknames = {str(file.parent / name) for name in ["package-lock.json", "npm-shrinkwrap.json"]}
+    excluded = locknames | {manifest, path}
+    outside = {
+        name: identity
+        for name, identity in identities.items()
+        if name not in excluded and not name.startswith(".github/")
+    }
+    if any(value is None for value in outside.values()):
+        return None
+    return {
+        "kind": "existing_excluded_ESLint_configuration",
+        "manifest": manifest,
+        "manifest_non_dependency_sha256": digest(
+            json.dumps(
+                {k: v for k, v in data.items() if k not in DEPENDENCY_GROUPS},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ),
+        "non_tooling_tree_sha256": digest(
+            json.dumps(outside, sort_keys=True, separators=(",", ":")).encode()
+        ),
+        "scope": (
+            "Existing lint and explicit files/exports boundary; "
+            "other tree outside CI/manifest/lock/config unchanged. "
+            "No runtime/API expansion inferred."
+        ),
+    }
+
+
+def retained_tool_resolution(baseline, current, entry):
+    role = baseline.get("tool_configuration_roles", {}).get(entry["path"])
+    if not role or role != current.get("tool_configuration_roles", {}).get(entry["path"]):
+        return None
+    manifest = entry["declaration_manifest"]
+    before = baseline.get("npm_resolution_records", {}).get(manifest)
+    after = current.get("npm_resolution_records", {}).get(manifest)
+    if (
+        not before
+        or not after
+        or before["lock_path"] != after["lock_path"]
+        or before["root_non_dependency_sha256"] != after["root_non_dependency_sha256"]
+    ):
+        return None
+    old = before["records"]
+    new = after["records"]
+    if any(
+        name.endswith(":" + entry["name"])
+        and value.startswith(("npm:", "file:", "link:", "workspace:", "git", "http"))
+        for name, value in before["declarations"].items()
+    ):
+        return None
+    if not new.keys() <= old.keys() or any(record != old[name] for name, record in new.items()):
+        return None
+    if not after["declarations"].keys() <= before["declarations"].keys() or any(
+        value != before["declarations"][name] for name, value in after["declarations"].items()
+    ):
+        return None
+    removed = old.keys() - new.keys()
+    removed_names = {loc.rsplit("node_modules/", 1)[-1] for loc in removed}
+    if any(set(record["referenced_names"]) & removed_names for record in new.values()):
+        return None
+
+    def closure(records):
+        pending = ["node_modules/" + entry["name"]]
+        seen = set()
+        while pending:
+            location = pending.pop()
+            if location in seen:
+                continue
+            record = records.get(location)
+            if (
+                not record
+                or record["https_source_without_userinfo"] is not True
+                or not isinstance(record["integrity"], str)
+                or not re.fullmatch(r"sha(?:256|384|512)-[A-Za-z0-9+/]+=*", record["integrity"])
+            ):
+                return None
+            seen.add(location)
+            for name in record["required_names"]:
+                directory = pathlib.PurePosixPath(location)
+                found = next(
+                    (
+                        str(parent / "node_modules" / name)
+                        for parent in [directory, *directory.parents]
+                        if parent.name != "node_modules"
+                        and str(parent / "node_modules" / name) in records
+                    ),
+                    None,
+                )
+                if found is None:
+                    return None
+                pending.append(found)
+        return seen
+
+    old_closure = closure(old)
+    new_closure = closure(new)
+    if old_closure is None or old_closure != new_closure:
+        return None
+    return {
+        "kind": "unchanged_retained_tooling_resolution_with_unrelated_removals",
+        "role": role,
+        "required_closure_records": len(new_closure),
+        "required_closure_sha256": digest(
+            json.dumps(
+                {loc: new[loc]["sha256"] for loc in sorted(new_closure)},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ),
+        "retained_lock_records": len(new),
+        "unrelated_removed_placements": sorted(removed),
+        "credit": ("Reuse only; external ESLint remains counted. No automatic removal credit."),
+    }
+
+
 def inspect_files(
     files,
     *,
@@ -925,6 +1166,7 @@ def inspect_files(
     reviewed_provenance=False,
     listing_complete=True,
     first_party_packages=None,
+    tracked_identities=None,
 ):
     entries = {}
     unknown = []
@@ -1027,11 +1269,20 @@ def inspect_files(
         p.split("/")[0] for p in files if "/" in p and p.endswith(".py")
     }
     npm_scopes = {}
+    npm_manifest_data = {}
+    tooling_roles = {}
+    identities = (
+        tracked_identities
+        if tracked_identities is not None
+        else {p: digest(raw) if raw is not None else None for p, raw in files.items()}
+    )
     for manifest, raw in files.items():
         if pathlib.PurePosixPath(manifest).name != "package.json" or raw is None:
             continue
         try:
             data = json.loads(raw)
+            if isinstance(data, dict):
+                npm_manifest_data[str(pathlib.PurePosixPath(manifest).parent)] = (manifest, data)
             npm_scopes[str(pathlib.PurePosixPath(manifest).parent)] = {
                 name
                 for group in [
@@ -1319,10 +1570,22 @@ def inspect_files(
                     if issue.startswith("Dynamic JavaScript module argument")
                     else "unparsed",
                 )
+            role = tool_configuration_role(path, npm_manifest_data, identities, files)
+            if role:
+                tooling_roles[path] = role
             for specifier in module_refs:
-                if specifier.startswith((".", "/", "@/", "~/", "#", "node:")):
+                if specifier.startswith("node:"):
+                    if specifier.removeprefix("node:") not in NODE_CORE | {
+                        "test",
+                        "test/reporters",
+                        "sqlite",
+                        "sea",
+                    }:
+                        gap(path, "Unrecognized explicit Node builtin requires runtime SDK review")
                     continue
-                if specifier.split("/")[0] in NODE_CORE:
+                if specifier.startswith((".", "/", "@/", "~/", "#")):
+                    continue
+                if specifier in NODE_CORE:
                     continue
                 if specifier.startswith(("http:", "https:")):
                     add("vendored_cdn", "url", specifier, "remote", path, "remote_import")
@@ -1342,7 +1605,8 @@ def inspect_files(
                     )
                     entry["usage_scope"] = (
                         "build_test_dev"
-                        if path.startswith(
+                        if role
+                        or path.startswith(
                             ("scripts/", "tools/", "tests/", "test/", "e2e/", ".github/")
                         )
                         or re.search(r"(^|/)[^/]+\.(test|spec)\.[^/]+$", path)
@@ -1642,6 +1906,76 @@ def inspect_files(
     npm_entries = [e for e in entries.values() if e["ecosystem"] == "npm"]
     placements = [e for e in npm_entries if e["kind"] == "locked_installation"]
     declared = [e for e in npm_entries if e["kind"] != "locked_installation"]
+    resolution_records = {}
+    for item in units:
+        directory = str(pathlib.PurePosixPath(item["manifest"]).parent)
+        if item["additional_transitive_placements"] is None or directory not in locks:
+            continue
+        lock_path, lock = locks[directory]
+        records = {}
+        supported = True
+        for location, record in lock["packages"].items():
+            if not location:
+                continue
+            groups = [
+                record.get(group, {})
+                for group in ["dependencies", "optionalDependencies", "peerDependencies"]
+            ]
+            if any(
+                not isinstance(group, dict)
+                or any(not isinstance(k, str) or not isinstance(v, str) for k, v in group.items())
+                for group in groups
+            ):
+                supported = False
+                break
+            required = set(groups[0]) - set(groups[1])
+            referenced = set().union(*(set(group) for group in groups))
+            source_url = record.get("resolved")
+            parsed_url = urlsplit(source_url) if isinstance(source_url, str) else None
+            source_ok = bool(
+                parsed_url
+                and parsed_url.scheme == "https"
+                and parsed_url.hostname
+                and not parsed_url.username
+                and not parsed_url.password
+            )
+            integrity = record.get("integrity")
+            if not isinstance(integrity, str) or not re.fullmatch(
+                r"sha(?:256|384|512)-[A-Za-z0-9+/]+=*", integrity
+            ):
+                integrity = None
+            records[location] = {
+                "sha256": digest(
+                    json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+                ),
+                "required_names": sorted(required),
+                "referenced_names": sorted(referenced),
+                "https_source_without_userinfo": source_ok,
+                "resolved_metadata_sha256": digest(str(source_url).encode()),
+                "integrity": integrity,
+            }
+        if not supported:
+            gap(lock_path, "npm dependency edge metadata unsupported")
+            continue
+        data = manifests[directory][1]
+        if any(not isinstance(data.get(group, {}), dict) for group in DEPENDENCY_GROUPS):
+            continue
+        resolution_records[item["manifest"]] = {
+            "lock_path": lock_path,
+            "root_non_dependency_sha256": digest(
+                json.dumps(
+                    {k: v for k, v in lock["packages"][""].items() if k not in DEPENDENCY_GROUPS},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ),
+            "declarations": {
+                group + ":" + name: value
+                for group in DEPENDENCY_GROUPS
+                for name, value in data.get(group, {}).items()
+            },
+            "records": records,
+        }
     npm_units = {
         "declarations_total": len(declared),
         "external_runtime_declarations": sum(e["category"] == "runtime_direct" for e in declared),
@@ -1714,6 +2048,8 @@ def inspect_files(
         "dependency_state": state,
         "category_counts": counts,
         "npm_units": npm_units,
+        "tool_configuration_roles": tooling_roles,
+        "npm_resolution_records": resolution_records,
         "requirements_sets": requirements_sets,
         "critical_input_gaps": critical_gaps,
         "explicit_first_party_sdk_modules": sdk_modules,
@@ -1772,6 +2108,7 @@ def scan_repo(repo, ref, source_id, owner, reviewed_provenance=False, first_part
             owner=owner,
             reviewed_provenance=reviewed_provenance,
             first_party_packages=first_party_packages,
+            tracked_identities=paths,
         )
         for path, oid in links:
             e = {
@@ -1874,13 +2211,17 @@ def compare(baseline, current):
             and e.get("name") == entry["name"]
             and e.get("category") in {"runtime_direct", "build_test_dev_direct"}
         ]
+        retained_resolution = retained_tool_resolution(baseline, current, entry)
         if (
             anchors
             and all(
                 e["id"] in new and new[e["id"]].get("version_or_ref") == e.get("version_or_ref")
                 for e in anchors
             )
-            and all(old_hash.get(p) and old_hash[p] == new_hash.get(p) for p in [manifest, lock])
+            and (
+                all(old_hash.get(p) and old_hash[p] == new_hash.get(p) for p in [manifest, lock])
+                or retained_resolution
+            )
         ):
             additions.remove(entry)
             reuse.append(
@@ -1890,6 +2231,7 @@ def compare(baseline, current):
                     "manifest_sha256": old_hash[manifest],
                     "lock_sha256": old_hash[lock],
                     "credit": "existing package reuse in tooling; dependency retained",
+                    "retained_resolution_proof": retained_resolution,
                 }
             )
     old_sets = baseline.get("requirements_sets", {})
