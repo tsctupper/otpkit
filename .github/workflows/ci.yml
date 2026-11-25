@@ -68,7 +68,7 @@ jobs:
           git merge-base --is-ancestor "$BASE_SHA" "$GITHUB_SHA" || unknown "The base is not a proven ancestor."
 
           policy="$RUNNER_TEMP/dependency-policy"
-          mkdir "$policy"
+          python3 -I -S -c 'import os, sys; os.mkdir(sys.argv[1])' "$policy"
           tools_ref="$BASE_SHA"
           # Only the reviewed upgrade from this exact pre-install revision needs bootstrap pins.
           if [[ "$BASE_SHA" == "a526e6657a11aac003bea40063bd5d63ee866c53" ]]; then tools_ref="$GITHUB_SHA"; fi
@@ -108,6 +108,7 @@ jobs:
         if: matrix.node == 22
         run: |
           npm pack --silent
-          mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          python3 -I -S -c 'import os, sys; os.mkdir(sys.argv[1])' "$RUNNER_TEMP/smoke"
+          cd "$RUNNER_TEMP/smoke"
           npm init -y >/dev/null && npm install --silent "$GITHUB_WORKSPACE"/tsctupper-otpkit-*.tgz
           node --input-type=module -e "import { totp, generateSecret } from '@tsctupper/otpkit'; console.log(totp(generateSecret()))"
