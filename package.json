@@ -58,7 +58,6 @@
   },
   "homepage": "https://github.com/tsctupper/otpkit#readme",
   "devDependencies": {
-    "@types/node": "^22.10.2",
     "eslint": "^10.14.0",
     "prettier": "^3.9.10",
     "typescript": "^5.7.2",
