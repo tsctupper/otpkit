@@ -152,7 +152,16 @@ used to authorize enrollment or verification.
 
 `secret` is always **raw bytes** (`Uint8Array`) — decode Base32 text first. Options: `digits` (6–8, default 6), `algorithm` (`"SHA1"` default), `period` (30s), `window`, `now`, `epoch`. Full types are bundled.
 
-Invalid configuration (out-of-range digits, non-positive period, a computed time step outside the safe integer range, a `window` outside 0–100, an empty secret or label) throws a `RangeError`; a malformed or wrong token never throws — `verifyTotp` just returns `false`.
+With valid configuration, `verifyTotp` returns `false` for a malformed or incorrect token. `hotp` throws a `RangeError` for an empty secret or a digit count outside 6–8. A non-positive period in `totp`, a window outside 0–100 in `verifyTotp`, and an empty label in `otpauthURL` also throw a `RangeError`.
+
+### Counter validation
+
+**Published npm package (`@tsctupper/otpkit@1.1.3`).** Validate numeric precision in the caller before passing a counter or custom clock settings to the library.
+
+- For **HOTP**, require `Number.isSafeInteger(counter) && counter >= 0` when the counter is a `number`. Both versions accept exact `bigint` counters from 0 through 2⁶⁴ − 1 and reject values of that type outside the range. Parse large decimal counters directly from text, for example with `BigInt("9007199254740993")`, to preserve the original digits.
+- For **TOTP** with custom `now` (Unix milliseconds), `epoch` (Unix seconds, default 0) or `period` (seconds, default 30), use finite values and a positive period. Compute `const step = Math.floor((Math.floor(now / 1000) - epoch) / period)` and require `Number.isSafeInteger(step) && step >= 0` before generation or verification. Pass the same clock values you checked.
+
+**Unreleased source on `main`.** The library adds explicit `RangeError` checks for an unsafe HOTP `number` counter and for an unsafe computed TOTP step. The [unreleased changelog](./CHANGELOG.md#unreleased) tracks these checks.
 
 ## Standards & verification
 
@@ -170,7 +179,6 @@ Run them yourself: `npm test`.
 
 - **Only `node:crypto`.** HMAC and `timingSafeEqual` come from Node's standard library, so there is no dependency tree to audit and nothing for a supply-chain attack to land in.
 - **Secrets are raw bytes.** Functions take a `Uint8Array`, not a string, so the Base32-versus-raw-bytes mix-up that breaks many TOTP integrations can't happen silently. Base32 is a separate, explicit step.
-- **`bigint` counters.** The RFC 4226 counter is 64 bits wide. Numeric counters must be safe integers (at most `Number.MAX_SAFE_INTEGER`); larger values must be supplied as `bigint`, such as `9007199254740993n`. Converting an already rounded number to `bigint` cannot recover its original value. Counters are `bigint` internally and anything outside 0 through 2^64 − 1 is rejected rather than wrapped.
 - **`matchTotp` returns the step, not a boolean.** Replay protection needs to know _which_ step was accepted. Returning it keeps the library stateless while making the safe pattern the easy one. `verifyTotp` is a thin wrapper for when you don't need it.
 - **Bounded work on untrusted input.** Each step in the drift window costs one HMAC, so the window is capped at 100. Malformed tokens return `false` instead of throwing, so bad input can't be used to crash a login path.
 - **Scope.** It generates and verifies codes and builds the enrollment URI. It does not render QR codes, store secrets or rate-limit; those belong to your application, and the runnable example above demonstrates the application boundary.
