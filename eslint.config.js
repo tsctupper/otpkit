@@ -1,9 +1,22 @@
-import js from "@eslint/js";
+import { createHash } from "node:crypto";
+import { builtinRules } from "eslint/use-at-your-own-risk";
 import tseslint from "typescript-eslint";
+
+// ESLint exposes its built-in rule registry without a stability guarantee.
+const recommendedNames = [...builtinRules]
+  .filter(([, rule]) => rule.meta.docs.recommended === true)
+  .map(([name]) => name)
+  .sort();
+const ruleSetDigest = createHash("sha256").update(JSON.stringify(recommendedNames)).digest("hex");
+if (ruleSetDigest !== "26d2e4c3de39d0c32819430300649c594c42c7fdbf3ca0f7ab8723e7b73abb4d") {
+  throw new Error(
+    "ESLint's recommended core rules changed. Review the rule changes before updating the digest.",
+  );
+}
 
 export default tseslint.config(
   { ignores: ["dist", "coverage", "node_modules"] },
-  js.configs.recommended,
+  { rules: Object.fromEntries(recommendedNames.map((name) => [name, "error"])) },
   ...tseslint.configs.strictTypeChecked,
   {
     languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } },
