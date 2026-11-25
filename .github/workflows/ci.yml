@@ -98,6 +98,7 @@ jobs:
         run: |
           npm run typecheck
           npm run lint
+          node --test scripts/lint/no-namespace.test.mjs
           npm run format:check
       - run: npm run build
       - name: Test the runnable example against the published package
